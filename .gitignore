@@ -16,3 +16,6 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+
+# Written on the server; records which base path the current build targets.
+.base-path

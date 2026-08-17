@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  web:
+    name: Build web
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -19,11 +20,55 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
+        working-directory: web
         run: npm ci
 
       - name: Build application
+        working-directory: web
         run: npm run build
+
+  server:
+    name: Check server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Syntax check
+        working-directory: server
+        run: |
+          for file in $(find . -name '*.js' -not -path './node_modules/*'); do
+            node --check "$file"
+          done
+
+      - name: Boot smoke test
+        working-directory: server
+        env:
+          JWT_SECRET: ci-smoke-test-secret
+          DB_FILE: ':memory:'
+          PORT: 4999
+        run: |
+          node index.js &
+          pid=$!
+          for _ in $(seq 1 20); do
+            sleep 0.5
+            if curl -fsS http://127.0.0.1:4999/api/health; then ok=1; break; fi
+          done
+          kill $pid
+          test "$ok" = 1

@@ -1,0 +1,52 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            echo "=== Deploying cleaner ==="
+            cd ~/apps/cleaner
+
+            git fetch --prune
+            git checkout main
+            git pull --ff-only origin main
+
+            echo "--- Building web ---"
+            cd web
+            npm ci
+            # BASE_PATH is written by the server-side setup; it keeps the build
+            # matching wherever nginx currently serves the app from.
+            VITE_BASE_PATH="$(cat ~/apps/cleaner/.base-path 2>/dev/null || echo /)" npm run build
+
+            echo "--- Installing server dependencies ---"
+            cd ../server
+            npm ci --omit=dev
+
+            echo "--- Restarting PM2 process ---"
+            cd ~/apps/cleaner
+            pm2 startOrReload ecosystem.config.js --update-env
+            pm2 save
+
+            echo "--- Health check ---"
+            sleep 2
+            curl -fsS "http://127.0.0.1:${PORT:-4003}/api/health"
+
+            echo "=== Deploy complete ==="

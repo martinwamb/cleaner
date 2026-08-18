@@ -46,6 +46,7 @@ function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [catalogError, setCatalogError] = useState('')
   const [notice, setNotice] = useState('')
+  const [requestedService, setRequestedService] = useState('')
 
   useEffect(() => {
     getCatalog()
@@ -53,8 +54,9 @@ function App() {
       .catch((error: ApiError) => setCatalogError(error.message))
   }, [])
 
-  const openRequest = () => {
+  const openRequest = (service?: string) => {
     setNotice('')
+    setRequestedService(service || '')
     setView('request')
   }
 
@@ -71,7 +73,7 @@ function App() {
         </nav>
         <div className="topbar-actions">
           <button className="text-button" onClick={() => setView('operations')}>Operator workspace</button>
-          <button className="button button-dark compact" onClick={openRequest}>Request a quote <span>↗</span></button>
+          <button className="button button-dark compact" onClick={() => openRequest()}>Request a quote <span>↗</span></button>
         </div>
       </header>
 
@@ -90,7 +92,7 @@ function App() {
 
       {view === 'home' && <Home services={catalog?.services ?? []} onRequest={openRequest} onServices={() => setView('services')} />}
       {view === 'services' && <Services services={catalog?.services ?? []} onRequest={openRequest} />}
-      {view === 'request' && <QuoteRequest catalog={catalog} onBack={() => setView('home')} />}
+      {view === 'request' && <QuoteRequest catalog={catalog} onBack={() => setView('home')} initialService={requestedService} />}
       {view === 'operations' && <Operations onNotice={setNotice} />}
 
       <footer className="footer">
@@ -126,21 +128,43 @@ function Home({ services, onRequest, onServices }: { services: Service[], onRequ
   </main>
 }
 
-function Services({ services, onRequest }: { services: Service[], onRequest: () => void }) {
+// Only ids the catalog actually serves. A service with no entry still appears
+// under "All"; categories are derived from the services present so a filter
+// option can never render an always-empty list.
+const CATEGORY_BY_SERVICE: Record<string, string> = {
+  turnover: 'Property',
+  deep: 'Property',
+  commercial: 'Facility',
+  construction: 'Project',
+}
+
+function Services({ services, onRequest }: { services: Service[], onRequest: (service?: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('All')
+  const categories = useMemo(
+    () => ['All', ...new Set(services.map((service) => CATEGORY_BY_SERVICE[service.id]).filter(Boolean))],
+    [services],
+  )
+  const visibleServices = services.filter((service) => {
+    const matchesCategory = category === 'All' || CATEGORY_BY_SERVICE[service.id] === category
+    const searchText = `${service.name} ${service.description} ${service.buyers}`.toLowerCase()
+    return matchesCategory && searchText.includes(query.toLowerCase().trim())
+  })
   return <main className="page-width inner-page">
-    <div className="eyebrow">WORKING SERVICE MENU</div>
-    <div className="inner-title"><h1>Services with<br /><i>room to grow.</i></h1><p>We are validating the best fit for the equipment, the local market, and the kind of repeat work that makes a business useful.</p></div>
-    <div className="service-list">{services.map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} large />)}</div>
+    <div className="eyebrow">SERVICE CATALOG</div>
+    <div className="inner-title"><h1>Services for<br /><i>the work ahead.</i></h1><p>Practical cleaning services for the properties, facilities, projects, and operating teams that keep work moving.</p></div>
+    <div className="catalog-tools"><label>Search services<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by service or need" /></label><label>Filter by work type<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label></div>
+    <div className="service-list">{visibleServices.map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} large />)}{visibleServices.length === 0 && <p className="empty-catalog">No services match those filters. Try a broader search.</p>}</div>
   </main>
 }
 
-function ServiceCard({ service, index, onRequest, large = false }: { service: Service, index: number, onRequest: () => void, large?: boolean }) {
+function ServiceCard({ service, index, onRequest, large = false }: { service: Service, index: number, onRequest: (service?: string) => void, large?: boolean }) {
   const icon = service.id === 'turnover' ? '↻' : service.id === 'deep' ? '✦' : service.id === 'construction' ? '⌂' : '▦'
   return <article className={`service-card ${service.color} ${large ? 'large' : ''}`}>
     <div className="service-number">{String(index + 1).padStart(2, '0')}</div>
     <div className="service-card-main">
       <div><h3>{service.name}</h3><p>{service.description}</p></div>
-      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={onRequest}>Request a quote <span>↗</span></button></div>
+      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>Request a quote <span>↗</span></button></div>
     </div>
     <div className="service-icon">{icon}</div>
   </article>
@@ -156,13 +180,18 @@ const emptyQuote: QuoteInput = {
   location: '',
 }
 
-function QuoteRequest({ catalog, onBack }: { catalog: Catalog | null, onBack: () => void }) {
+function QuoteRequest({ catalog, onBack, initialService }: { catalog: Catalog | null, onBack: () => void, initialService?: string }) {
   const [input, setInput] = useState<QuoteInput>(emptyQuote)
   const [estimate, setEstimate] = useState<Estimate | null>(null)
   const [errors, setErrors] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [receipt, setReceipt] = useState<QuoteReceipt | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+
+  useEffect(() => {
+    if (!initialService || !catalog?.services.some((service) => service.name === initialService)) return
+    setInput((current) => current.service ? current : { ...current, service: initialService })
+  }, [catalog, initialService])
 
   const selectedService = catalog?.services.find((service) => service.name === input.service)
   const sizeUnit = selectedService?.sizeUnit ?? 'rooms, units, or sq ft'

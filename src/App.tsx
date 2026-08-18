@@ -1,7 +1,7 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 
-type View = 'home' | 'services' | 'request' | 'operations'
-type RequestStatus = 'New' | 'Under Review' | 'Quote Sent' | 'Confirmed' | 'Completed'
+type View = 'home' | 'services' | 'service-area' | 'about' | 'faqs' | 'request' | 'operations'
+type RequestStatus = 'New' | 'Under Review' | 'Quote Sent' | 'Awaiting Customer' | 'Confirmed' | 'Completed' | 'Cancelled'
 
 type Service = {
   id: string
@@ -35,12 +35,19 @@ type Lead = {
 
 const services: Service[] = [
   { id: 'turnover', name: 'Apartment turnover', description: 'Reliable reset cleaning between tenants, listings, and occupancy windows.', buyers: 'Property managers and landlords', color: 'sage' },
+  { id: 'move', name: 'Move-in / move-out', description: 'A clear reset for the handoff between one resident and the next.', buyers: 'Property owners, managers, and realtors', color: 'gold' },
   { id: 'deep', name: 'Deep cleaning', description: 'A detailed clean for homes, offices, and spaces that need a fresh start.', buyers: 'Owners and business operators', color: 'clay' },
+  { id: 'janitorial', name: 'Janitorial and facility care', description: 'Repeatable service that keeps active facilities ready for teams and visitors.', buyers: 'Facility managers and business operators', color: 'ink' },
   { id: 'construction', name: 'Post-construction cleanup', description: 'Dust, debris, and final-detail cleaning to help a project become move-in ready.', buyers: 'Contractors and developers', color: 'gold' },
   { id: 'commercial', name: 'Commercial cleaning', description: 'Consistent recurring service for the spaces your team or customers rely on.', buyers: 'Business owners and operators', color: 'ink' },
+  { id: 'disinfection', name: 'Disinfection and sanitation', description: 'Targeted cleaning for spaces that need a higher standard of surface care.', buyers: 'Businesses, property managers, and operators', color: 'sage' },
+  { id: 'emergency', name: 'Emergency and disaster cleanup', description: 'Coordinated cleanup after an unexpected event has disrupted a space.', buyers: 'Owners, managers, and operators', color: 'clay' },
+  { id: 'cleanroom', name: 'Clean-room cleaning', description: 'Specialty cleaning for controlled environments and strict operating requirements.', buyers: 'Qualified facility operators', color: 'gold' },
+  { id: 'carpet', name: 'Carpet and upholstery cleaning', description: 'Focused care for fabric surfaces that need a deeper reset.', buyers: 'Owners, managers, and business operators', color: 'sage' },
+  { id: 'detail', name: 'Windows, cabinets, and appliances', description: 'Detail services that complete a turnover, deep clean, or property presentation.', buyers: 'Owners, managers, realtors, and operators', color: 'ink' },
 ]
 
-// Illustrative prototype rates. Replace these values after the business validates pricing.
+// Pricing remains configurable until approved commercial rate cards are entered.
 const pricingConfig = {
   'Apartment turnover': { base: 180, sizeRate: 48, minimum: 240, condition: { standard: 1, heavy: 1.25, extreme: 1.5 } },
   'Deep cleaning': { base: 150, sizeRate: 42, minimum: 180, condition: { standard: 1, heavy: 1.25, extreme: 1.5 } },
@@ -88,12 +95,25 @@ const initialLeads: Lead[] = [
 
 function App() {
   const [view, setView] = useState<View>('home')
-  const [leads, setLeads] = useState(initialLeads)
+  const [requestedService, setRequestedService] = useState('')
+  const [leads, setLeads] = useState<Lead[]>(() => {
+    try {
+      const saved = localStorage.getItem('fieldhouse-leads')
+      return saved ? JSON.parse(saved) : initialLeads
+    } catch {
+      return initialLeads
+    }
+  })
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null)
   const [notice, setNotice] = useState('')
 
-  const openRequest = () => {
+  useEffect(() => {
+    localStorage.setItem('fieldhouse-leads', JSON.stringify(leads))
+  }, [leads])
+
+  const openRequest = (service?: string) => {
     setNotice('')
+    setRequestedService(service || '')
     setView('request')
   }
 
@@ -143,13 +163,12 @@ function App() {
         </button>
         <nav className="public-nav" aria-label="Public navigation">
           <button className={view === 'services' ? 'active' : ''} onClick={() => setView('services')}>Services</button>
-          <button onClick={() => setView('home')}>Service area</button>
-          <button onClick={() => setView('home')}>About</button>
-          <button onClick={() => setView('home')}>FAQs</button>
+           <button className={view === 'about' ? 'active' : ''} onClick={() => setView('about')}>About</button>
+           <button className={view === 'faqs' ? 'active' : ''} onClick={() => setView('faqs')}>FAQs</button>
         </nav>
         <div className="topbar-actions">
           <button className="text-button" onClick={() => setView('operations')}>Operator workspace</button>
-          <button className="button button-dark compact" onClick={openRequest}>Request a quote <span>↗</span></button>
+           <button className="button button-dark compact" onClick={() => openRequest()}>Request a quote <span>↗</span></button>
         </div>
       </header>
 
@@ -157,10 +176,13 @@ function App() {
 
       {view === 'home' && <Home onRequest={openRequest} onServices={() => setView('services')} />}
       {view === 'services' && <Services onRequest={openRequest} />}
-      {view === 'request' && <QuoteRequest onSubmit={submitRequest} onBack={() => setView('home')} notice={notice} />}
+      {view === 'service-area' && <InfoPage eyebrow="SERVICE AREA" title="Local work, clearly scoped." body="We serve customers across Minneapolis and the wider Twin Cities metro. Share the address or neighborhood in your request so the operator can confirm service eligibility and timing." onRequest={openRequest} />}
+      {view === 'about' && <InfoPage eyebrow="ABOUT FIELDHOUSE" title="A dependable partner for the spaces that matter." body="Fieldhouse helps owners, managers, operators, realtors, and contractors turn cleaning needs into clear scopes, reliable plans, and repeat work." onRequest={openRequest} />}
+      {view === 'faqs' && <FaqPage onRequest={openRequest} />}
+      {view === 'request' && <QuoteRequest onSubmit={submitRequest} onBack={() => setView('home')} notice={notice} initialService={requestedService} />}
       {view === 'operations' && <Operations leads={leads} selectedLead={selectedLead} onSelect={setSelectedLead} onUpdate={updateLead} />}
 
-      <footer className="footer"><span>Fieldhouse is a working prototype.</span><span>Minneapolis · Twin Cities metro</span><span>Payments handled offline</span></footer>
+      <footer className="footer"><span>Fieldhouse cleaning platform</span><span>Minneapolis · Twin Cities metro</span><span>Payments handled offline</span></footer>
     </div>
   )
 }
@@ -172,30 +194,58 @@ function Home({ onRequest, onServices }: { onRequest: () => void, onServices: ()
         <div className="eyebrow"><span className="eyebrow-dot" />CLEANING, DONE PROPERLY</div>
         <h1>Make space for what comes next.</h1>
         <p className="hero-intro">Dependable cleaning for the properties, projects, and businesses that keep the Twin Cities moving.</p>
-        <div className="hero-actions"><button className="button button-dark" onClick={onRequest}>Request a quote <span>↗</span></button><button className="button button-quiet" onClick={onServices}>Explore services <span>↓</span></button></div>
-        <div className="hero-note"><span>01</span><p>Tell us what needs doing.<br />We will take it from there.</p></div>
+         <div className="hero-actions"><button className="button button-dark" onClick={onRequest}>Request a quote <span>↗</span></button><button className="button button-quiet" onClick={onServices}>Explore services <span>↗</span></button></div>
       </div>
       <div className="hero-art" aria-label="Abstract illustration of a clean room">
         <div className="art-sun" /><div className="art-window"><i /><i /><i /><i /></div><div className="art-floor" /><div className="art-plant"><b /><em /><em /><em /></div><div className="art-chair" /><span className="art-label">TWIN CITIES<br />SERVICE AREA</span>
       </div>
     </section>
-    <section className="proof-strip"><div className="page-width proof-grid"><div><strong>01</strong><span>Clear scopes.<br />No guesswork.</span></div><div><strong>02</strong><span>Built for<br />repeat work.</span></div><div><strong>03</strong><span>Local, responsive,<br />operator-led.</span></div><div className="proof-cta"><span>Have a space in mind?</span><button onClick={onRequest}>Start with a quote <span>↗</span></button></div></div></section>
-    <section className="section page-width"><div className="section-heading"><div><div className="eyebrow">SERVICES IN PROGRESS</div><h2>A clean start for<br /><i>different kinds</i> of work.</h2></div><p>We are shaping the service menu around the equipment, the property, and the result you need. These are the working categories today.</p></div><div className="service-grid">{services.slice(0, 3).map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} />)}</div></section>
+     <section className="proof-strip"><div className="page-width proof-grid"><div><strong>01</strong><span>Know what happens next.<br />Clear scope, clear quote.</span></div><div><strong>02</strong><span>Keep your property moving.<br />Reliable repeat service.</span></div><div><strong>03</strong><span>Get responsive local support.<br />One operator, start to finish.</span></div><div className="proof-cta"><span>Tell us what needs doing.<br />We will take it from there.</span><button onClick={onRequest}>Start with a quote <span>↗</span></button></div></div></section>
+     <section className="section page-width"><div className="section-heading"><div><div className="eyebrow">FEATURED SERVICES</div><h2>A clean start for<br /><i>different kinds</i> of work.</h2></div><p>From turnovers to active facilities, choose the service that fits the property, project, or operating need. We will review the scope before confirming the work.</p></div><div className="service-grid">{services.slice(0, 3).map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} />)}</div><button className="services-link" onClick={onServices}>See all services <span>↗</span></button></section>
     <section className="process-section"><div className="page-width process"><div><div className="eyebrow">HOW IT WORKS</div><h2>From request<br />to <i>ready.</i></h2></div><div className="process-steps"><div><span>01</span><h3>Tell us about the space</h3><p>Share the property, service, and timing. A few useful details help us understand the job.</p></div><div><span>02</span><h3>We review the scope</h3><p>An operator reviews your request and follows up with a clear quote or a clarifying question.</p></div><div><span>03</span><h3>We make a plan</h3><p>Once the scope works for everyone, we confirm the time and get to work.</p></div></div></div></section>
     <section className="closing-cta page-width"><div><div className="eyebrow">READY WHEN YOU ARE</div><h2>Let's talk about<br /><i>your space.</i></h2></div><button className="button button-light" onClick={onRequest}>Request a quote <span>↗</span></button></section>
   </main>
 }
 
-function Services({ onRequest }: { onRequest: () => void }) {
-  return <main className="page-width inner-page"><div className="eyebrow">WORKING SERVICE MENU</div><div className="inner-title"><h1>Services with<br /><i>room to grow.</i></h1><p>We are validating the best fit for the equipment, the local market, and the kind of repeat work that makes a business useful.</p></div><div className="service-list">{services.map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} large />)}</div></main>
+function InfoPage({ eyebrow, title, body, onRequest }: { eyebrow: string, title: string, body: string, onRequest: () => void }) {
+  return <main className="page-width inner-page"><div className="eyebrow">{eyebrow}</div><div className="inner-title"><h1>{title}</h1><p>{body}</p></div><button className="button button-dark" onClick={onRequest}>Request a quote <span>↗</span></button></main>
 }
 
-function ServiceCard({ service, index, onRequest, large = false }: { service: Service, index: number, onRequest: () => void, large?: boolean }) {
-  return <article className={`service-card ${service.color} ${large ? 'large' : ''}`}><div className="service-number">0{index + 1}</div><div className="service-card-main"><div><h3>{service.name}</h3><p>{service.description}</p></div><div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={onRequest}>Request a quote <span>↗</span></button></div></div><div className="service-icon">{service.id === 'turnover' ? '↻' : service.id === 'deep' ? '✦' : service.id === 'construction' ? '⌂' : '▦'}</div></article>
+function FaqPage({ onRequest }: { onRequest: () => void }) {
+  const faqs = [
+    ['Is my preferred date confirmed when I submit?', 'No. Your preferred timing is a request. The operator confirms availability before a booking becomes confirmed.'],
+    ['How is the estimate used?', 'The estimate range is based on the information you provide. The operator reviews the scope and confirms the final quote.'],
+    ['Do you take payment online?', 'No. Payments are handled offline after the scope and booking are confirmed.'],
+    ['What if my service or location is unusual?', 'Tell us what you need and where the work is. The operator can review the request and ask a clarifying question.'],
+  ]
+  return <main className="page-width inner-page"><div className="eyebrow">FREQUENTLY ASKED QUESTIONS</div><div className="inner-title"><h1>Clear answers<br /><i>before you start.</i></h1><p>These answers explain how requests, estimates, timing, and payment work.</p></div><div className="faq-list">{faqs.map(([question, answer]) => <details key={question}><summary>{question}</summary><p>{answer}</p></details>)}</div><button className="button button-dark" onClick={onRequest}>Request a quote <span>↗</span></button></main>
 }
 
-function QuoteRequest({ onSubmit, onBack, notice }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void, onBack: () => void, notice: string }) {
+function Services({ onRequest }: { onRequest: (service?: string) => void }) {
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('All')
+  const categories = ['All', 'Property', 'Facility', 'Project', 'Specialty']
+  const categoryByService: Record<string, string> = { turnover: 'Property', move: 'Property', deep: 'Property', janitorial: 'Facility', commercial: 'Facility', construction: 'Project', emergency: 'Project', disinfection: 'Specialty', cleanroom: 'Specialty', carpet: 'Specialty', detail: 'Specialty' }
+  const visibleServices = services.filter((service) => {
+    const matchesCategory = category === 'All' || categoryByService[service.id] === category
+    const searchText = `${service.name} ${service.description} ${service.buyers}`.toLowerCase()
+    return matchesCategory && searchText.includes(query.toLowerCase().trim())
+  })
+  return <main className="page-width inner-page"><div className="eyebrow">SERVICE CATALOG</div><div className="inner-title"><h1>Services for<br /><i>the work ahead.</i></h1><p>Practical cleaning services for the properties, facilities, projects, and operating teams that keep work moving.</p></div><div className="catalog-tools"><label>Search services<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by service or need" /></label><label>Filter by work type<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label></div><div className="service-list">{visibleServices.map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} large />)}{visibleServices.length === 0 && <p className="empty-catalog">No services match those filters. Try a broader search.</p>}</div></main>
+}
+
+function ServiceCard({ service, index, onRequest, large = false }: { service: Service, index: number, onRequest: (service?: string) => void, large?: boolean }) {
+  return <article className={`service-card ${service.color} ${large ? 'large' : ''}`}><div className="service-number">0{index + 1}</div><div className="service-card-main"><div><h3>{service.name}</h3><p>{service.description}</p></div><div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>{large ? 'Request for Service' : 'Request a quote'} <span>↗</span></button></div></div><div className="service-icon">{service.id === 'turnover' ? '↻' : service.id === 'deep' ? '✦' : service.id === 'construction' ? '⌂' : '▦'}</div></article>
+}
+
+function QuoteRequest({ onSubmit, onBack, notice, initialService }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void, onBack: () => void, notice: string, initialService?: string }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null)
+  useEffect(() => {
+    if (!initialService) return
+    const serviceSelect = document.querySelector<HTMLSelectElement>('select[name="service"]')
+    if (serviceSelect) serviceSelect.value = initialService
+  }, [initialService])
+
   const updateEstimate = (event: FormEvent<HTMLFormElement>) => {
     const data = new FormData(event.currentTarget)
     setEstimate(calculateEstimate(String(data.get('service') || ''), String(data.get('property') || ''), String(data.get('size') || ''), String(data.get('condition') || 'Standard'), String(data.get('frequency') || 'One-time'), String(data.get('addOns') || ''), String(data.get('location') || '')))

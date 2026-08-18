@@ -128,13 +128,25 @@ function Home({ services, onRequest, onServices }: { services: Service[], onRequ
   </main>
 }
 
+// Only ids the catalog actually serves. A service with no entry still appears
+// under "All"; categories are derived from the services present so a filter
+// option can never render an always-empty list.
+const CATEGORY_BY_SERVICE: Record<string, string> = {
+  turnover: 'Property',
+  deep: 'Property',
+  commercial: 'Facility',
+  construction: 'Project',
+}
+
 function Services({ services, onRequest }: { services: Service[], onRequest: (service?: string) => void }) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('All')
-  const categories = ['All', 'Property', 'Facility', 'Project', 'Specialty']
-  const categoryByService: Record<string, string> = { turnover: 'Property', move: 'Property', deep: 'Property', janitorial: 'Facility', commercial: 'Facility', construction: 'Project', emergency: 'Project', disinfection: 'Specialty', cleanroom: 'Specialty', carpet: 'Specialty', detail: 'Specialty' }
+  const categories = useMemo(
+    () => ['All', ...new Set(services.map((service) => CATEGORY_BY_SERVICE[service.id]).filter(Boolean))],
+    [services],
+  )
   const visibleServices = services.filter((service) => {
-    const matchesCategory = category === 'All' || categoryByService[service.id] === category
+    const matchesCategory = category === 'All' || CATEGORY_BY_SERVICE[service.id] === category
     const searchText = `${service.name} ${service.description} ${service.buyers}`.toLowerCase()
     return matchesCategory && searchText.includes(query.toLowerCase().trim())
   })
@@ -152,7 +164,7 @@ function ServiceCard({ service, index, onRequest, large = false }: { service: Se
     <div className="service-number">{String(index + 1).padStart(2, '0')}</div>
     <div className="service-card-main">
       <div><h3>{service.name}</h3><p>{service.description}</p></div>
-      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>{large ? 'Request for Service' : 'Request a quote'} <span>↗</span></button></div>
+      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>Request a quote <span>↗</span></button></div>
     </div>
     <div className="service-icon">{icon}</div>
   </article>

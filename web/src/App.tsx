@@ -111,17 +111,17 @@ function Home({ services, onRequest, onServices }: { services: Service[], onRequ
         <div className="eyebrow"><span className="eyebrow-dot" />CLEANING, DONE PROPERLY</div>
         <h1>Make space for what comes next.</h1>
         <p className="hero-intro">Dependable cleaning for the properties, projects, and businesses that keep the Twin Cities moving.</p>
-        <div className="hero-actions"><button className="button button-dark" onClick={onRequest}>Request a quote <span>↗</span></button><button className="button button-quiet" onClick={onServices}>Explore services <span>↓</span></button></div>
-        <div className="hero-note"><span>01</span><p>Tell us what needs doing.<br />We will take it from there.</p></div>
+        <div className="hero-actions"><button className="button button-dark" onClick={onRequest}>Request a quote <span>↗</span></button><button className="button button-quiet" onClick={onServices}>Explore services <span>↗</span></button></div>
       </div>
       <div className="hero-art" aria-label="Abstract illustration of a clean room">
         <div className="art-sun" /><div className="art-window"><i /><i /><i /><i /></div><div className="art-floor" /><div className="art-plant"><b /><em /><em /><em /></div><div className="art-chair" /><span className="art-label">TWIN CITIES<br />SERVICE AREA</span>
       </div>
     </section>
-    <section className="proof-strip"><div className="page-width proof-grid"><div><strong>01</strong><span>Clear scopes.<br />No guesswork.</span></div><div><strong>02</strong><span>Built for<br />repeat work.</span></div><div><strong>03</strong><span>Local, responsive,<br />operator-led.</span></div><div className="proof-cta"><span>Have a space in mind?</span><button onClick={onRequest}>Start with a quote <span>↗</span></button></div></div></section>
+    <section className="proof-strip"><div className="page-width proof-grid"><div><strong>01</strong><span>Know what happens next.<br />Clear scope, clear quote.</span></div><div><strong>02</strong><span>Keep your property moving.<br />Reliable repeat service.</span></div><div><strong>03</strong><span>Get responsive local support.<br />One operator, start to finish.</span></div><div className="proof-cta"><span>Tell us what needs doing.<br />We will take it from there.</span><button onClick={onRequest}>Start with a quote <span>↗</span></button></div></div></section>
     <section className="section page-width">
-      <div className="section-heading"><div><div className="eyebrow">SERVICES IN PROGRESS</div><h2>A clean start for<br /><i>different kinds</i> of work.</h2></div><p>We are shaping the service menu around the equipment, the property, and the result you need. These are the working categories today.</p></div>
+      <div className="section-heading"><div><div className="eyebrow">FEATURED SERVICES</div><h2>A clean start for<br /><i>different kinds</i> of work.</h2></div><p>From turnovers to active facilities, choose the service that fits the property, project, or operating need. We will review the scope before confirming the work.</p></div>
       <div className="service-grid">{services.slice(0, 3).map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} />)}</div>
+      <button className="services-link" onClick={onServices}>See all services <span>↗</span></button>
     </section>
     <section className="process-section"><div className="page-width process"><div><div className="eyebrow">HOW IT WORKS</div><h2>From request<br />to <i>ready.</i></h2></div><div className="process-steps"><div><span>01</span><h3>Tell us about the space</h3><p>Share the property, service, and timing. A few useful details help us understand the job.</p></div><div><span>02</span><h3>We review the scope</h3><p>An operator reviews your request and follows up with a clear quote or a clarifying question.</p></div><div><span>03</span><h3>We make a plan</h3><p>Once the scope works for everyone, we confirm the time and get to work.</p></div></div></div></section>
     <section className="closing-cta page-width"><div><div className="eyebrow">READY WHEN YOU ARE</div><h2>Let's talk about<br /><i>your space.</i></h2></div><button className="button button-light" onClick={onRequest}>Request a quote <span>↗</span></button></section>
@@ -164,7 +164,7 @@ function ServiceCard({ service, index, onRequest, large = false }: { service: Se
     <div className="service-number">{String(index + 1).padStart(2, '0')}</div>
     <div className="service-card-main">
       <div><h3>{service.name}</h3><p>{service.description}</p></div>
-      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>Request a quote <span>↗</span></button></div>
+      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>{large ? 'Request for Service' : 'Request a quote'} <span>↗</span></button></div>
     </div>
     <div className="service-icon">{icon}</div>
   </article>

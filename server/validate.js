@@ -1,6 +1,7 @@
 'use strict';
 
-const { CONDITIONS, FREQUENCIES, ADD_ONS, PROPERTY_TYPES, serviceNames } = require('./pricing');
+const { CONDITIONS, FREQUENCIES, serviceNames } = require('./pricing');
+const { getPublicCatalog } = require('./catalog');
 
 const LIMITS = {
   customer: 120,
@@ -12,7 +13,6 @@ const LIMITS = {
   timing: 160,
 };
 
-const ADD_ON_NAMES = new Set(ADD_ONS.map((addOn) => addOn.name));
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const text = (value, max) => String(value == null ? '' : value).trim().slice(0, max);
@@ -25,6 +25,8 @@ const text = (value, max) => String(value == null ? '' : value).trim().slice(0, 
 function parseQuoteRequest(body) {
   const errors = [];
   const input = body && typeof body === 'object' ? body : {};
+  const catalog = getPublicCatalog();
+  const addOnNames = new Set(catalog.addOns.map((addOn) => addOn.name));
 
   const customer = text(input.customer, LIMITS.customer);
   if (!customer) errors.push('Name is required.');
@@ -37,7 +39,7 @@ function parseQuoteRequest(body) {
   if (!serviceNames().includes(service)) errors.push('Select one of the listed services.');
 
   const property = text(input.property, 80);
-  if (property && !PROPERTY_TYPES.includes(property)) errors.push('Select a listed property type.');
+   if (property && !catalog.propertyTypes.includes(property)) errors.push('Select a listed property type.');
 
   const size = Number(input.size);
   if (!Number.isFinite(size) || size <= 0) errors.push('Enter an approximate size greater than zero.');
@@ -47,7 +49,7 @@ function parseQuoteRequest(body) {
 
   const rawAddOns = Array.isArray(input.addOns) ? input.addOns : input.addOns ? [input.addOns] : [];
   const addOns = [...new Set(rawAddOns.map((item) => String(item)))].filter((item) =>
-    ADD_ON_NAMES.has(item),
+    addOnNames.has(item),
   );
 
   const location = text(input.location, LIMITS.location);
@@ -77,6 +79,7 @@ function parseQuoteRequest(body) {
 /** Looser parse for the live estimate preview: partial input is expected. */
 function parseEstimateInput(body) {
   const input = body && typeof body === 'object' ? body : {};
+  const addOnNames = new Set(getPublicCatalog().addOns.map((addOn) => addOn.name));
   const rawAddOns = Array.isArray(input.addOns) ? input.addOns : input.addOns ? [input.addOns] : [];
   return {
     service: text(input.service, 80),
@@ -85,7 +88,7 @@ function parseEstimateInput(body) {
     condition: input.condition,
     frequency: input.frequency,
     addOns: [...new Set(rawAddOns.map((item) => String(item)))].filter((item) =>
-      ADD_ON_NAMES.has(item),
+      addOnNames.has(item),
     ),
     location: text(input.location, LIMITS.location),
   };

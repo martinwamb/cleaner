@@ -6,7 +6,13 @@ export type Service = {
   description: string
   buyers: string
   color: string
+  icon: string
+  category: string
+  featured: boolean
+  featuredOrder: number
   sizeUnit: string
+  propertyTypes?: string[]
+  frequencyOptions?: string[]
 }
 
 export type Catalog = {
@@ -48,6 +54,56 @@ export type Lead = {
 }
 
 export type Operator = { id: number; email: string; name: string }
+
+export type AddOnRule = { name: string; valueType: string; price: number }
+
+export type ManagedService = {
+  id: string
+  name: string
+  category: string
+  status: 'Draft' | 'Published' | 'Paused' | 'Archived'
+  description: string
+  buyers: string
+  color: string
+  icon: string
+  featuredOrder: number
+  sizeUnit: string
+  propertyTypes: string[]
+  customerTypes: string[]
+  frequencyOptions: string[]
+  useCases: string
+  includedScope: string
+  exclusions: string
+  tags: string
+  timingPattern: string
+  preferredLeadTime: string
+  estimatedDuration: string
+  repeatPotential: string
+  customerNote: string
+  featured: boolean
+  pricingReadiness: string
+  pricingBasis: string
+  pricingModel: string
+  sizeInputLabel: string
+  basePrice: number | null
+  estimateSpread: number | null
+  unitRate: number | null
+  minimumPrice: number | null
+  standardMultiplier: number | null
+  heavyMultiplier: number | null
+  extremeMultiplier: number | null
+  oneTimeMultiplier: number | null
+  recurringMultiplier: number | null
+  rushMultiplier: number | null
+  travelFeeType: string
+  travelFeeAmount: number | null
+  serviceAreaRule: string
+  addOnRules: AddOnRule[]
+  version: string
+  effectiveDate: string | null
+  changeReason: string
+  updatedAt: string
+}
 
 export type QuoteInput = {
   service: string
@@ -138,6 +194,39 @@ export const logout = () => request<void>('/auth/logout', { method: 'POST' })
 
 export const getSession = () =>
   request<{ operator: Operator }>('/auth/me').then((result) => result.operator)
+
+export const getOperatorServices = () =>
+  request<{ services: ManagedService[] }>('/ops/services').then((result) => result.services)
+
+export const createOperatorService = (input: { id: string; name: string; description?: string }) =>
+  request<{ service: ManagedService }>('/ops/services', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }).then((result) => result.service)
+
+export const saveOperatorService = (id: string, service: Partial<ManagedService>) =>
+  request<{ service: ManagedService }>(`/ops/services/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(service),
+  }).then((result) => result.service)
+
+export const publishOperatorService = (id: string) =>
+  request<{ service: ManagedService }>(`/ops/services/${encodeURIComponent(id)}/publish`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }).then((result) => result.service)
+
+export const pauseOperatorService = (id: string) =>
+  request<{ service: ManagedService }>(`/ops/services/${encodeURIComponent(id)}/pause`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }).then((result) => result.service)
+
+export const previewOperatorService = (id: string, service: Partial<ManagedService>, input: { size: number; condition: string; frequency: string; addOns: string[]; location: string }) =>
+  request<{ estimate: Estimate }>(`/ops/services/${encodeURIComponent(id)}/preview`, {
+    method: 'POST',
+    body: JSON.stringify({ ...input, ...service }),
+  }).then((result) => result.estimate)
 
 export const getRequests = () =>
   request<{ requests: Lead[] }>('/requests').then((result) => result.requests)

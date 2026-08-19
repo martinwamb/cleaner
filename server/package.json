@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "seed": "node scripts/seed-operator.js"
+    "seed": "node scripts/seed-operator.js",
+    "catalog:import": "node scripts/import-catalog.js",
+    "catalog:validate": "node scripts/validate-catalog.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -36,6 +36,39 @@ npm run dev
 
 Open `http://127.0.0.1:5173`.
 
+## Catalog and pricing workflow
+
+The operator workbook is the pricing editing surface:
+
+```text
+../Cleaner Service Catalog.xlsx
+```
+
+The importer is retained for initial setup and workbook migrations. Day-to-day
+changes happen in the authenticated Operator workspace under Services:
+
+```text
+Operator workspace → Services → edit → Save draft → Preview estimate → Publish
+```
+
+For a workbook migration or seed refresh, run the importer from `server/`:
+
+```bash
+npm run catalog:import
+```
+
+The importer repairs/enriches the workbook fields, refreshes
+`server/catalog-config.json`, and seeds the SQLite catalog when no services
+exist. SQLite is the runtime source for the operator catalog, public services,
+and estimate calculation.
+
+For a service that is already `Ready`, operators should change only the
+explicit pricing inputs in that row: `Base Price`, `Unit Rate`, `Minimum Price`,
+condition multipliers, frequency multipliers, add-on rules, or travel fee. The
+`Pricing Basis`, `Change Reason`, `Pricing Version`, and `Effective Date` should
+be updated with the change. Services marked `Needs operator pricing review` are
+not enabled for automatic quotes.
+
 ## Validation
 
 ```bash
@@ -49,6 +82,11 @@ cd server && npm start
 | ------ | -------------------------- | -------- | ---------------------------------------- |
 | GET    | `/api/health`              | –        | Liveness probe                           |
 | GET    | `/api/catalog`             | –        | Services, property types, add-ons        |
+| GET    | `/api/ops/services`         | operator | Working service catalog                  |
+| PATCH  | `/api/ops/services/:id`     | operator | Save service edits as a draft            |
+| POST   | `/api/ops/services/:id/preview` | operator | Preview a draft estimate              |
+| POST   | `/api/ops/services/:id/publish` | operator | Publish service and pricing           |
+| POST   | `/api/ops/services/:id/pause` | operator | Hide service from new requests          |
 | POST   | `/api/estimate`            | –        | Illustrative estimate for partial input  |
 | POST   | `/api/requests`            | –        | Submit a quote request                   |
 | POST   | `/api/auth/login`          | –        | Operator sign-in (httpOnly cookie)       |
@@ -80,6 +118,7 @@ Required repository secrets: `SERVER_HOST`, `SERVER_USER`, `SSH_PRIVATE_KEY`.
 
 ## Status
 
-Pricing values in `server/pricing.js` are illustrative placeholders — replace
-them once the business validates real rates. There is no payment processing;
+The first four pricing-ready services use the imported catalog configuration.
+The remaining workbook services are cataloged but remain disabled for automatic
+quotes until their pricing inputs are approved. There is no payment processing;
 payments are handled offline.

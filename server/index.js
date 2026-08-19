@@ -8,6 +8,7 @@ const cookieParser = require('cookie-parser');
 const catalogRoutes = require('./routes/catalog');
 const authRoutes = require('./routes/auth');
 const requestRoutes = require('./routes/requests');
+const serviceRoutes = require('./routes/services');
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is not set. Copy .env.example to .env and fill it in.');
@@ -30,6 +31,7 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 app.use('/api', catalogRoutes);
 app.use('/api', authRoutes);
 app.use('/api', requestRoutes);
+app.use('/api', serviceRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

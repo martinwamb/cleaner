@@ -2,16 +2,23 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import {
   advanceRequest,
   ApiError,
+  createOperatorService,
   getCatalog,
   getEstimate,
   getRequests,
+  getOperatorServices,
   getSession,
   login,
   logout,
+  pauseOperatorService,
+  publishOperatorService,
+  previewOperatorService,
+  saveOperatorService,
   submitQuote,
   type Catalog,
   type Estimate,
   type Lead,
+  type ManagedService,
   type Operator,
   type QuoteInput,
   type QuoteReceipt,
@@ -47,6 +54,7 @@ function App() {
   const [catalogError, setCatalogError] = useState('')
   const [notice, setNotice] = useState('')
   const [requestedService, setRequestedService] = useState('')
+  const scrollPositions = useRef<Partial<Record<View, number>>>({})
 
   useEffect(() => {
     getCatalog()
@@ -54,25 +62,37 @@ function App() {
       .catch((error: ApiError) => setCatalogError(error.message))
   }, [])
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      window.scrollTo(0, scrollPositions.current[view] ?? 0)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [view])
+
+  const navigate = (nextView: View) => {
+    scrollPositions.current[view] = window.scrollY
+    setView(nextView)
+  }
+
   const openRequest = (service?: string) => {
     setNotice('')
     setRequestedService(service || '')
-    setView('request')
+    navigate('request')
   }
 
   return (
     <div className="app-shell">
       <header className="topbar">
-        <button className="brand" onClick={() => setView('home')} aria-label="Return to home">
+        <button className="brand" onClick={() => navigate('home')} aria-label="Return to home">
           <span className="brand-mark">fh</span>
           <span><strong>fieldhouse</strong><small>cleaning platform</small></span>
         </button>
         <nav className="public-nav" aria-label="Public navigation">
-          <button className={view === 'services' ? 'active' : ''} onClick={() => setView('services')}>Services</button>
-          <button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}>Home</button>
+          <button className={view === 'home' ? 'active' : ''} onClick={() => navigate('home')}>Home</button>
+          <button className={view === 'services' ? 'active' : ''} onClick={() => navigate('services')}>Services</button>
         </nav>
         <div className="topbar-actions">
-          <button className="text-button" onClick={() => setView('operations')}>Operator workspace</button>
+          <button className="text-button" onClick={() => navigate('operations')}>Operator workspace</button>
           <button className="button button-dark compact" onClick={() => openRequest()}>Request a quote <span>↗</span></button>
         </div>
       </header>
@@ -90,13 +110,13 @@ function App() {
         </div>
       )}
 
-      {view === 'home' && <Home services={catalog?.services ?? []} onRequest={openRequest} onServices={() => setView('services')} />}
+      {view === 'home' && <Home services={catalog?.services ?? []} onRequest={openRequest} onServices={() => navigate('services')} />}
       {view === 'services' && <Services services={catalog?.services ?? []} onRequest={openRequest} />}
-      {view === 'request' && <QuoteRequest catalog={catalog} onBack={() => setView('home')} initialService={requestedService} />}
+      {view === 'request' && <QuoteRequest catalog={catalog} onBack={() => navigate('home')} initialService={requestedService} />}
       {view === 'operations' && <Operations onNotice={setNotice} />}
 
       <footer className="footer">
-        <span>Fieldhouse is a working prototype.</span>
+        <span>Local cleaning, clearly scoped.</span>
         <span>Minneapolis · Twin Cities metro</span>
         <span>Payments handled offline</span>
       </footer>
@@ -105,6 +125,7 @@ function App() {
 }
 
 function Home({ services, onRequest, onServices }: { services: Service[], onRequest: () => void, onServices: () => void }) {
+  const featuredServices = services.filter((service) => service.featured).sort((a, b) => a.featuredOrder - b.featuredOrder).slice(0, 3)
   return <main>
     <section className="hero page-width">
       <div className="hero-copy">
@@ -120,33 +141,23 @@ function Home({ services, onRequest, onServices }: { services: Service[], onRequ
     <section className="proof-strip"><div className="page-width proof-grid"><div><strong>01</strong><span>Know what happens next.<br />Clear scope, clear quote.</span></div><div><strong>02</strong><span>Keep your property moving.<br />Reliable repeat service.</span></div><div><strong>03</strong><span>Get responsive local support.<br />One operator, start to finish.</span></div><div className="proof-cta"><span>Tell us what needs doing.<br />We will take it from there.</span><button onClick={onRequest}>Start with a quote <span>↗</span></button></div></div></section>
     <section className="section page-width">
       <div className="section-heading"><div><div className="eyebrow">FEATURED SERVICES</div><h2>A clean start for<br /><i>different kinds</i> of work.</h2></div><p>From turnovers to active facilities, choose the service that fits the property, project, or operating need. We will review the scope before confirming the work.</p></div>
-      <div className="service-grid">{services.slice(0, 3).map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} />)}</div>
+      <div className="service-grid">{featuredServices.map((service, index) => <ServiceCard key={service.id} service={service} index={index} onRequest={onRequest} />)}</div>
       <button className="services-link" onClick={onServices}>See all services <span>↗</span></button>
     </section>
-    <section className="process-section"><div className="page-width process"><div><div className="eyebrow">HOW IT WORKS</div><h2>From request<br />to <i>ready.</i></h2></div><div className="process-steps"><div><span>01</span><h3>Tell us about the space</h3><p>Share the property, service, and timing. A few useful details help us understand the job.</p></div><div><span>02</span><h3>We review the scope</h3><p>An operator reviews your request and follows up with a clear quote or a clarifying question.</p></div><div><span>03</span><h3>We make a plan</h3><p>Once the scope works for everyone, we confirm the time and get to work.</p></div></div></div></section>
-    <section className="closing-cta page-width"><div><div className="eyebrow">READY WHEN YOU ARE</div><h2>Let's talk about<br /><i>your space.</i></h2></div><button className="button button-light" onClick={onRequest}>Request a quote <span>↗</span></button></section>
+    <section className="process-section"><div className="page-width process"><div><div className="eyebrow">HOW IT WORKS</div><h2>From request<br />to <i>ready.</i></h2></div><div className="process-steps"><div><span>01</span><h3>Tell us about the space</h3><p>Share the property, service, and timing. A few useful details help us understand the job.</p></div><div><span>02</span><h3>We review the scope</h3><p>An operator reviews your request and follows up with a clear quote or a clarifying question.</p></div><div><span>03</span><h3>We get to work</h3><p>Once the scope works for everyone, we confirm the time and get to work.</p></div></div></div></section>
+    <section className="closing-cta page-width"><div className="closing-cta-heading"><div className="eyebrow">READY WHEN YOU ARE</div><h2>Let's talk about<br /><i>your space.</i></h2></div><div className="closing-cta-copy"><p>Not sure where to start? Tell us what you need, and we will help shape the right scope before confirming the work.</p><button className="button button-light" onClick={onRequest}>Request a quote <span>↗</span></button></div></section>
   </main>
-}
-
-// Only ids the catalog actually serves. A service with no entry still appears
-// under "All"; categories are derived from the services present so a filter
-// option can never render an always-empty list.
-const CATEGORY_BY_SERVICE: Record<string, string> = {
-  turnover: 'Property',
-  deep: 'Property',
-  commercial: 'Facility',
-  construction: 'Project',
 }
 
 function Services({ services, onRequest }: { services: Service[], onRequest: (service?: string) => void }) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('All')
   const categories = useMemo(
-    () => ['All', ...new Set(services.map((service) => CATEGORY_BY_SERVICE[service.id]).filter(Boolean))],
+    () => ['All', ...new Set(services.map((service) => service.category).filter(Boolean))],
     [services],
   )
   const visibleServices = services.filter((service) => {
-    const matchesCategory = category === 'All' || CATEGORY_BY_SERVICE[service.id] === category
+    const matchesCategory = category === 'All' || service.category === category
     const searchText = `${service.name} ${service.description} ${service.buyers}`.toLowerCase()
     return matchesCategory && searchText.includes(query.toLowerCase().trim())
   })
@@ -159,14 +170,13 @@ function Services({ services, onRequest }: { services: Service[], onRequest: (se
 }
 
 function ServiceCard({ service, index, onRequest, large = false }: { service: Service, index: number, onRequest: (service?: string) => void, large?: boolean }) {
-  const icon = service.id === 'turnover' ? '↻' : service.id === 'deep' ? '✦' : service.id === 'construction' ? '⌂' : '▦'
   return <article className={`service-card ${service.color} ${large ? 'large' : ''}`}>
     <div className="service-number">{String(index + 1).padStart(2, '0')}</div>
     <div className="service-card-main">
       <div><h3>{service.name}</h3><p>{service.description}</p></div>
-      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>{large ? 'Request for Service' : 'Request a quote'} <span>↗</span></button></div>
+      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>Request for Service <span>↗</span></button></div>
     </div>
-    <div className="service-icon">{icon}</div>
+    <div className="service-icon">{service.icon}</div>
   </article>
 }
 
@@ -416,6 +426,7 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterKey>('All')
   const [error, setError] = useState('')
+  const [section, setSection] = useState<'requests' | 'services'>('requests')
 
   const load = useCallback(async () => {
     try {
@@ -479,21 +490,25 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
         <p>Here is what needs your attention across the pipeline.</p>
       </div>
       <div className="hero-actions">
-        <button className="button button-quiet" onClick={load}>Refresh</button>
-        <button className="button button-dark" onClick={signOut}>Sign out</button>
-      </div>
+          <button className={`button button-quiet ${section === 'requests' ? 'selected' : ''}`} onClick={() => setSection('requests')}>Requests</button>
+          <button className={`button button-quiet ${section === 'services' ? 'selected' : ''}`} onClick={() => setSection('services')}>Services</button>
+          <button className="button button-quiet" onClick={load}>Refresh</button>
+          <button className="button button-dark" onClick={signOut}>Sign out</button>
+        </div>
     </div>
 
     {error && <div className="page-width form-errors" role="alert"><p>{error}</p></div>}
 
-    <div className="page-width metric-grid">
+    {section === 'requests' && <div className="page-width metric-grid">
       <Metric label="New requests" value={counts.new} detail="Needs first review" tone="clay" />
       <Metric label="Quotes to follow up" value={counts.quotes} detail="Waiting on customer" tone="gold" />
       <Metric label="Confirmed work" value={counts.confirmed} detail="Upcoming bookings" tone="sage" />
       <Metric label="Completed" value={counts.completed} detail="Closed this pipeline" tone="ink" />
-    </div>
+    </div>}
 
-    <div className="ops-content page-width">
+    {section === 'services'
+      ? <ServiceManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
+      : <div className="ops-content page-width">
       <section className="request-panel">
         <div className="panel-heading">
           <div><div className="eyebrow">INBOUND PIPELINE</div><h2>Requests</h2></div>
@@ -523,8 +538,135 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
           ? <LeadDetail lead={selectedLead} onAdvance={onAdvance} />
           : <div className="empty-detail"><div className="empty-icon">↗</div><h3>Select a request</h3><p>Review scope, prepare a quote, and keep the next action moving.</p></div>}
       </aside>
-    </div>
+      </div>}
   </main>
+}
+
+function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: string) => void, onUnauthorized: () => void }) {
+  const [services, setServices] = useState<ManagedService[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<ManagedService | null>(null)
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'All' | ManagedService['status']>('All')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState<{ low: number, high: number, breakdown: string[] } | null>(null)
+  const [sampleSize, setSampleSize] = useState('4')
+  const [sampleCondition, setSampleCondition] = useState('Standard')
+  const [sampleFrequency, setSampleFrequency] = useState('One-time')
+  const [creating, setCreating] = useState(false)
+  const [newService, setNewService] = useState({ id: '', name: '', description: '' })
+
+  const load = useCallback(async () => {
+    try {
+      const result = await getOperatorServices()
+      setServices(result)
+      setSelectedId((current) => current && result.some((service) => service.id === current) ? current : result[0]?.id ?? null)
+      setError('')
+    } catch (caught) {
+      const apiError = caught as ApiError
+      if (apiError.status === 401) onUnauthorized()
+      else setError(apiError.message)
+    }
+  }, [onUnauthorized])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const next = services.find((service) => service.id === selectedId) ?? null
+    setDraft(next ? { ...next, addOnRules: next.addOnRules.map((item) => ({ ...item })) } : null)
+    setPreview(null)
+  }, [selectedId, services])
+
+  const visible = services.filter((service) => {
+    const matchesStatus = statusFilter === 'All' || service.status === statusFilter
+    return matchesStatus && `${service.name} ${service.category} ${service.status}`.toLowerCase().includes(query.toLowerCase().trim())
+  })
+  const setField = <K extends keyof ManagedService>(key: K, value: ManagedService[K]) => {
+    setDraft((current) => current ? { ...current, [key]: value } : current)
+  }
+  const setNumber = (key: keyof ManagedService, value: string) => setField(key, value === '' ? null : Number(value) as never)
+
+  const save = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const saved = await saveOperatorService(draft.id, draft)
+      setServices((current) => current.map((service) => service.id === saved.id ? saved : service))
+      onNotice(`${saved.name} saved as a draft.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const publish = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const saved = await saveOperatorService(draft.id, draft)
+      const published = await publishOperatorService(saved.id)
+      setServices((current) => current.map((service) => service.id === published.id ? published : service))
+      onNotice(`${published.name} is now published.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const pause = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const paused = await pauseOperatorService(draft.id)
+      setServices((current) => current.map((service) => service.id === paused.id ? paused : service))
+      onNotice(`${paused.name} is paused and hidden from new requests.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const create = async () => {
+    const name = newService.name.trim()
+    const id = newService.id.trim()
+    if (!name || !id) { setError('Enter a service name and ID before creating the draft.'); return }
+    try {
+      const created = await createOperatorService({ ...newService, id, name })
+      setServices((current) => [...current, created])
+      setSelectedId(created.id)
+      setCreating(false)
+      setNewService({ id: '', name: '', description: '' })
+      onNotice(`${created.name} created as a draft.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+  }
+
+  const runPreview = async () => {
+    if (!draft) return
+    try {
+      setPreview(await previewOperatorService(draft.id, draft, { size: Number(sampleSize), condition: sampleCondition, frequency: sampleFrequency, addOns: draft.addOnRules.map((item) => item.name).slice(0, 1), location: '55401' }))
+      setError('')
+    } catch (caught) { setError((caught as ApiError).message) }
+  }
+
+  return <div className="service-management page-width">
+    <div className="service-management-toolbar">
+      <div><div className="eyebrow">WORKING SERVICE CATALOG</div><h2>Services and pricing</h2><p>Draft changes privately, preview the estimate, then publish when the rule is ready.</p></div>
+      <div className="hero-actions"><button className="button button-quiet" onClick={load}>Refresh</button><button className="button button-dark" onClick={() => setCreating((current) => !current)}>{creating ? 'Cancel' : 'Add service'} <span>{creating ? '×' : '+'}</span></button></div>
+    </div>
+    {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+    {creating && <form className="new-service-form" onSubmit={(event) => { event.preventDefault(); create() }}><div><div className="eyebrow">NEW DRAFT SERVICE</div><p>Start with the public identity. Scope and pricing can be completed in the editor before publishing.</p></div><label>Service ID<input required pattern="[a-z0-9-]+" value={newService.id} onChange={(event) => setNewService((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. move-in-cleaning" /></label><label>Service name<input required value={newService.name} onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Move-in cleaning" /></label><label className="span-2">Short description<textarea value={newService.description} onChange={(event) => setNewService((current) => ({ ...current, description: event.target.value }))} /></label><button className="button button-dark" type="submit">Create draft <span>+</span></button></form>}
+    <div className="service-management-grid">
+      <aside className="service-index">
+        <label>Find a service<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search services" /></label>
+        <div className="service-filter-pills" aria-label="Filter services">
+          {(['All', 'Published', 'Draft', 'Paused'] as const).map((filter) => <button key={filter} className={statusFilter === filter ? 'selected' : ''} onClick={() => setStatusFilter(filter)}>{filter}<span>{filter === 'All' ? services.length : services.filter((service) => service.status === filter).length}</span></button>)}
+        </div>
+        <label className="mobile-service-select">Choose service<select value={selectedId ?? ''} onChange={(event) => setSelectedId(event.target.value)}>{visible.map((service) => <option key={service.id} value={service.id}>{service.name} · {service.status}</option>)}</select></label>
+        {visible.map((service) => <button className={`service-index-row ${selectedId === service.id ? 'selected' : ''}`} key={service.id} onClick={() => setSelectedId(service.id)}><span><strong>{service.name}</strong><small>{service.category}</small></span><em className={`catalog-status ${service.status.toLowerCase()}`}>{service.status}</em></button>)}
+      </aside>
+      {draft && <section className="service-editor">
+        <div className="editor-heading"><div><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><h3>{draft.name}</h3><p>Version {draft.version} · {draft.pricingReadiness}</p></div><div className="editor-actions"><button className="button button-quiet" onClick={save} disabled={busy}>Save draft</button>{draft.status === 'Published' ? <button className="button button-quiet" onClick={pause} disabled={busy}>Pause</button> : <button className="button button-dark" onClick={publish} disabled={busy}>Publish</button>}</div></div>
+        <div className="editor-section"><div className="eyebrow">BASICS</div><div className="editor-fields"><label>Service name<input value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Category<input value={draft.category} onChange={(event) => setField('category', event.target.value)} /></label><label>Card icon<input value={draft.icon} onChange={(event) => setField('icon', event.target.value)} maxLength={2} /></label><label>Featured order<input type="number" min="0" value={draft.featuredOrder} onChange={(event) => setField('featuredOrder', Number(event.target.value))} /></label><label className="toggle-field"><input type="checkbox" checked={draft.featured} onChange={(event) => setField('featured', event.target.checked)} /> Show in featured services</label><label className="span-2">Short description<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} /></label><label className="span-2">Included scope<textarea value={draft.includedScope} onChange={(event) => setField('includedScope', event.target.value)} /></label><label className="span-2">Exclusions and assumptions<textarea value={draft.exclusions} onChange={(event) => setField('exclusions', event.target.value)} /></label></div></div>
+        <div className="editor-section"><div className="eyebrow">PRICING RULE</div><p className="field-help">These fields drive the estimate. Price Low and Price High remain reference ranges; they are not calculation inputs.</p><div className="editor-fields pricing-fields"><label>Pricing model<select value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per room</option><option>Per square foot</option><option>Per unit</option><option>Hourly</option><option>Custom quote</option></select></label><label>Size input<input value={draft.sizeInputLabel} onChange={(event) => setField('sizeInputLabel', event.target.value)} /></label><label>Base price<input type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} /></label><label>Unit rate<input type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} /></label><label>Minimum price<input type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} /></label><label>Estimate spread<input type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} /></label><label>Standard multiplier<input type="number" step="0.01" value={draft.standardMultiplier ?? ''} onChange={(event) => setNumber('standardMultiplier', event.target.value)} /></label><label>Heavy multiplier<input type="number" step="0.01" value={draft.heavyMultiplier ?? ''} onChange={(event) => setNumber('heavyMultiplier', event.target.value)} /></label><label>Extreme multiplier<input type="number" step="0.01" value={draft.extremeMultiplier ?? ''} onChange={(event) => setNumber('extremeMultiplier', event.target.value)} /></label><label>Recurring multiplier<input type="number" step="0.01" value={draft.recurringMultiplier ?? ''} onChange={(event) => setNumber('recurringMultiplier', event.target.value)} /></label><label>Travel fee amount<input type="number" value={draft.travelFeeAmount ?? ''} onChange={(event) => setNumber('travelFeeAmount', event.target.value)} /></label><label>Pricing readiness<select value={draft.pricingReadiness} onChange={(event) => setField('pricingReadiness', event.target.value)}><option>Needs operator pricing review</option><option>Ready</option><option>Blocked</option></select></label><label className="span-2">Pricing basis<textarea value={draft.pricingBasis} onChange={(event) => setField('pricingBasis', event.target.value)} /></label><label className="span-2">Change reason<textarea value={draft.changeReason} onChange={(event) => setField('changeReason', event.target.value)} /></label></div></div>
+        <div className="editor-section"><div className="eyebrow">ADD-ONS</div><p className="field-help">One rule per line: name | flat or per unit | amount.</p><textarea className="addon-editor" value={draft.addOnRules.map((item) => `${item.name} | ${item.valueType} | ${item.price}`).join('\n')} onChange={(event) => setField('addOnRules', event.target.value.split('\n').filter(Boolean).map((line) => { const [name, valueType, price] = line.split('|').map((part) => part.trim()); return { name, valueType: valueType || 'flat', price: Number(price) || 0 } }))} /> </div>
+        <div className="editor-section preview-section"><div><div className="eyebrow">PREVIEW DRAFT</div><p className="field-help">Test the current draft without publishing it.</p></div><div className="preview-controls"><label>Sample size<input type="number" value={sampleSize} onChange={(event) => setSampleSize(event.target.value)} /></label><label>Condition<select value={sampleCondition} onChange={(event) => setSampleCondition(event.target.value)}><option>Standard</option><option>Heavy</option><option>Extreme</option></select></label><label>Frequency<select value={sampleFrequency} onChange={(event) => setSampleFrequency(event.target.value)}><option>One-time</option><option>Recurring</option></select></label><button className="button button-dark" onClick={runPreview}>Preview estimate</button></div>{preview && <div className="preview-result"><strong>${preview.low.toLocaleString()}–${preview.high.toLocaleString()}</strong><span>{preview.breakdown.join(' · ')}</span></div>}</div>
+      </section>}
+    </div>
+  </div>
 }
 
 function OperatorLogin({ onSignedIn }: { onSignedIn: (operator: Operator) => void }) {

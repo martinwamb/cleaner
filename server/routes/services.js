@@ -120,6 +120,15 @@ router.post('/ops/services/:id/publish', (req, res) => {
   if (!service) return res.status(404).json({ error: 'Service not found.' });
   const publishedRate = db.prepare("SELECT 1 FROM rate_cards WHERE service_id = ? AND status = 'Published' LIMIT 1").get(service.id);
   if (!publishedRate) return res.status(409).json({ error: 'Publish a Rate Card before publishing this service.' });
+  const readiness = [
+    !service.name || !service.description ? 'Add a customer-facing service name and description.' : '',
+    !service.includedScope ? 'Define the included scope.' : '',
+    !service.exclusions ? 'Define exclusions and assumptions.' : '',
+    !service.customerNote ? 'Add customer preparation guidance.' : '',
+    !service.propertyTypes.length ? 'Choose at least one eligible property type.' : '',
+    !service.timingPattern || !service.estimatedDuration ? 'Define timing and estimated duration.' : '',
+  ].filter(Boolean);
+  if (readiness.length) return res.status(409).json({ error: 'Complete the service readiness checklist before publishing.', errors: readiness });
   const raw = selectRaw.get(service.id);
   if (raw.status === 'Published' && raw.draft_snapshot) {
     applyServiceFields(service, service.id);

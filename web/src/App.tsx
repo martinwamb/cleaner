@@ -71,6 +71,12 @@ function formatTimestamp(value: string) {
   return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+function isPastDue(value: string) {
+  if (!value) return false
+  const due = new Date(`${value}T23:59:59`)
+  return !Number.isNaN(due.getTime()) && due.getTime() < Date.now()
+}
+
 function App() {
   const [view, setView] = useState<View>('home')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
@@ -427,9 +433,12 @@ function QuoteRequest({ catalog, onBack, initialService }: { catalog: Catalog | 
 
 const FILTERS = {
   All: () => true,
-  New: (lead: Lead) => lead.status === 'New',
-  Upcoming: (lead: Lead) => ['Accepted', 'Scheduling', 'Scheduled'].includes(lead.status),
-  Closed: (lead: Lead) => lead.status === 'Completed',
+  'Needs review': (lead: Lead) => lead.status === 'New',
+  'Needs information': (lead: Lead) => ['Qualifying', 'Waiting for Customer'].includes(lead.status),
+  Assessment: (lead: Lead) => ['Assessment Needed', 'Assessment Complete'].includes(lead.status),
+  'Ready to quote': (lead: Lead) => ['Assessment Complete', 'Quote Draft'].includes(lead.status),
+  'Acceptance due': (lead: Lead) => ['Quote Sent', 'Follow-up Due'].includes(lead.status),
+  Accepted: (lead: Lead) => lead.status === 'Accepted',
 } satisfies Record<string, (lead: Lead) => boolean>
 
 type FilterKey = keyof typeof FILTERS
@@ -443,7 +452,7 @@ const NEXT_LABEL: Partial<Record<RequestStatus, string>> = {
   'Quote Draft': 'Send quote',
   'Quote Sent': 'Follow up with customer',
   'Follow-up Due': 'Record customer decision',
-  Accepted: 'Schedule work',
+  Accepted: 'Acceptance recorded',
   Scheduling: 'Confirm schedule',
   Scheduled: 'Start work',
   'In Progress': 'Quality check',
@@ -493,16 +502,20 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
   }
 
   const counts = useMemo(() => ({
-    new: leads.filter((lead) => lead.status === 'New').length,
-    quotes: leads.filter((lead) => ['Quote Sent', 'Follow-up Due'].includes(lead.status)).length,
-    confirmed: leads.filter((lead) => ['Accepted', 'Scheduling', 'Scheduled'].includes(lead.status)).length,
-    completed: leads.filter((lead) => lead.status === 'Completed').length,
+    review: leads.filter(FILTERS['Needs review']).length,
+    information: leads.filter(FILTERS['Needs information']).length,
+    assessment: leads.filter(FILTERS.Assessment).length,
+    acceptance: leads.filter(FILTERS['Acceptance due']).length,
   }), [leads])
 
   const visible = useMemo(() => leads.filter(FILTERS[filter]), [leads, filter])
   const selectedLead = leads.find((lead) => lead.id === selectedId) ?? null
 
   const onAdvance = async (lead: Lead) => {
+    if (lead.status === 'Accepted') {
+      onNotice('Quote accepted. Scheduling is shelved for this MVP.')
+      return
+    }
     try {
       const updated = await advanceRequest(lead.id)
       setLeads((current) => current.map((item) => item.id === updated.id ? updated : item))
@@ -542,12 +555,13 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
     </div>
 
     {error && <div className="page-width form-errors" role="alert"><p>{error}</p></div>}
+    <div className="sr-only" aria-live="polite">{selectedLead ? `${selectedLead.id}, ${selectedLead.customer}, ${selectedLead.status}. ${selectedLead.nextAction}` : 'No request selected.'}</div>
 
     {section === 'requests' && <div className="page-width metric-grid">
-      <Metric label="New requests" value={counts.new} detail="Needs first review" tone="clay" />
-      <Metric label="Quotes to follow up" value={counts.quotes} detail="Waiting on customer" tone="gold" />
-      <Metric label="Confirmed work" value={counts.confirmed} detail="Upcoming bookings" tone="sage" />
-      <Metric label="Completed" value={counts.completed} detail="Closed this pipeline" tone="ink" />
+      <Metric label="Needs review" value={counts.review} detail="Start with the oldest request" tone="clay" />
+      <Metric label="Missing information" value={counts.information} detail="Clarify before pricing" tone="gold" />
+      <Metric label="Assessment work" value={counts.assessment} detail="Evidence before quote" tone="sage" />
+      <Metric label="Acceptance due" value={counts.acceptance} detail="Customer decision needed" tone="ink" />
     </div>}
 
     {section === 'services'
@@ -560,7 +574,7 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
           <div><div className="eyebrow">INBOUND PIPELINE</div><h2>Requests</h2></div>
           <div className="filter-pills">
             {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
-              <button key={key} className={filter === key ? 'selected' : ''} onClick={() => setFilter(key)}>
+              <button key={key} className={filter === key ? 'selected' : ''} aria-pressed={filter === key} onClick={() => setFilter(key)}>
                 {key} <span>{leads.filter(FILTERS[key]).length}</span>
               </button>
             ))}
@@ -569,10 +583,10 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
         <div className="request-table">
           {visible.length === 0 && <p className="loading-note">No requests in this view yet.</p>}
           {visible.map((lead) => (
-            <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} key={lead.id} onClick={() => setSelectedId(lead.id)}>
+            <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} aria-pressed={selectedId === lead.id} key={lead.id} onClick={() => setSelectedId(lead.id)}>
               <span className="request-id">{lead.id}<small>{formatTimestamp(lead.created)}</small></span>
               <span className="request-customer"><strong>{lead.customer}</strong><small>{lead.organization}</small></span>
-               <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small><small className="request-next-action">Next: {lead.nextAction}{lead.nextActionDue ? ` · ${lead.nextActionDue}` : ''}</small></span>
+               <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small><small className={`request-next-action ${isPastDue(lead.nextActionDue) ? 'past-due' : ''}`}>Next: {lead.nextAction}{lead.nextActionDue ? ` · ${lead.nextActionDue}` : ''}</small></span>
               <span className={`priority ${lead.priority.toLowerCase()}`}>{lead.priority}</span>
               <Status status={lead.status} />
             </button>
@@ -581,11 +595,25 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
       </section>
       <aside className="detail-panel">
         {selectedLead
-           ? <LeadDetail lead={selectedLead} onAdvance={onAdvance} onUpdate={onUpdate} />
+           ? <LeadDetail lead={selectedLead} onAdvance={onAdvance} onUpdate={onUpdate} onNotice={onNotice} />
           : <div className="empty-detail"><div className="empty-icon">↗</div><h3>Select a request</h3><p>Review scope, prepare a quote, and keep the next action moving.</p></div>}
       </aside>
       </div>}
   </main>
+}
+
+function ServiceReadiness({ service }: { service: ManagedService }) {
+  const checks = [
+    ['Public identity', Boolean(service.name && service.description)],
+    ['Included scope', Boolean(service.includedScope.trim())],
+    ['Exclusions', Boolean(service.exclusions.trim())],
+    ['Customer preparation', Boolean(service.customerNote.trim())],
+    ['Eligible property types', service.propertyTypes.length > 0],
+    ['Timing and duration', Boolean(service.timingPattern.trim() && service.estimatedDuration.trim())],
+    ['Pricing ready', service.pricingReadiness.toLowerCase().includes('ready')],
+  ] as const
+  const ready = checks.every(([, complete]) => complete)
+  return <div className="readiness-card"><div className="workflow-block-heading"><span>SERVICE READINESS</span><small className={ready ? 'ready-label' : 'not-ready-label'}>{ready ? 'Ready to review' : `${checks.filter(([, complete]) => !complete).length} items to complete`}</small></div><div className="readiness-list">{checks.map(([label, complete]) => <span className={complete ? 'ready' : 'not-ready'} key={label}><b>{complete ? '✓' : '!'}</b>{label}</span>)}</div><p className="field-help">Publishing should make the customer-facing scope and pricing understandable without relying on operator memory.</p></div>
 }
 
 function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: string) => void, onUnauthorized: () => void }) {
@@ -706,7 +734,8 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
       </aside>
       {draft && <section className="service-editor">
         <div className="editor-heading"><div><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><h3>{draft.name}</h3><p>Version {draft.version} · {draft.pricingReadiness}</p></div><div className="editor-actions"><button className="button button-quiet" onClick={save} disabled={busy}>Save draft</button>{draft.status === 'Published' ? <button className="button button-quiet" onClick={pause} disabled={busy}>Pause</button> : <button className="button button-dark" onClick={publish} disabled={busy}>Publish</button>}</div></div>
-        <div className="editor-section"><div className="eyebrow">BASICS</div><div className="editor-fields"><label>Service name<input value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Category<input value={draft.category} onChange={(event) => setField('category', event.target.value)} /></label><label>Card icon<input value={draft.icon} onChange={(event) => setField('icon', event.target.value)} maxLength={2} /></label><label>Featured order<input type="number" min="0" value={draft.featuredOrder} onChange={(event) => setField('featuredOrder', Number(event.target.value))} /></label><label className="toggle-field"><input type="checkbox" checked={draft.featured} onChange={(event) => setField('featured', event.target.checked)} /> Show in featured services</label><label className="span-2">Short description<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} /></label><label className="span-2">Included scope<textarea value={draft.includedScope} onChange={(event) => setField('includedScope', event.target.value)} /></label><label className="span-2">Exclusions and assumptions<textarea value={draft.exclusions} onChange={(event) => setField('exclusions', event.target.value)} /></label></div></div>
+         <ServiceReadiness service={draft} />
+         <div className="editor-section"><div className="eyebrow">BASICS</div><div className="editor-fields"><label>Service name<input value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Category<input value={draft.category} onChange={(event) => setField('category', event.target.value)} /></label><label>Card icon<input value={draft.icon} onChange={(event) => setField('icon', event.target.value)} maxLength={2} /></label><label>Featured order<input type="number" min="0" value={draft.featuredOrder} onChange={(event) => setField('featuredOrder', Number(event.target.value))} /></label><label className="toggle-field"><input type="checkbox" checked={draft.featured} onChange={(event) => setField('featured', event.target.checked)} /> Show in featured services</label><label className="span-2">Short description<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} /></label><label className="span-2">Included scope<textarea value={draft.includedScope} onChange={(event) => setField('includedScope', event.target.value)} /></label><label className="span-2">Exclusions and assumptions<textarea value={draft.exclusions} onChange={(event) => setField('exclusions', event.target.value)} /></label><label className="span-2">Customer preparation guidance<textarea value={draft.customerNote} onChange={(event) => setField('customerNote', event.target.value)} placeholder="What should the customer do before service?" /></label></div></div>
         <div className="editor-section"><div className="eyebrow">PRICING RULE</div><p className="field-help">These fields drive the estimate. Price Low and Price High remain reference ranges; they are not calculation inputs.</p><div className="editor-fields pricing-fields"><label>Pricing model<select value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per room</option><option>Per square foot</option><option>Per unit</option><option>Hourly</option><option>Custom quote</option></select></label><label>Size input<input value={draft.sizeInputLabel} onChange={(event) => setField('sizeInputLabel', event.target.value)} /></label><label>Base price<input type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} /></label><label>Unit rate<input type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} /></label><label>Minimum price<input type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} /></label><label>Estimate spread<input type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} /></label><label>Standard multiplier<input type="number" step="0.01" value={draft.standardMultiplier ?? ''} onChange={(event) => setNumber('standardMultiplier', event.target.value)} /></label><label>Heavy multiplier<input type="number" step="0.01" value={draft.heavyMultiplier ?? ''} onChange={(event) => setNumber('heavyMultiplier', event.target.value)} /></label><label>Extreme multiplier<input type="number" step="0.01" value={draft.extremeMultiplier ?? ''} onChange={(event) => setNumber('extremeMultiplier', event.target.value)} /></label><label>Recurring multiplier<input type="number" step="0.01" value={draft.recurringMultiplier ?? ''} onChange={(event) => setNumber('recurringMultiplier', event.target.value)} /></label><label>Travel fee amount<input type="number" value={draft.travelFeeAmount ?? ''} onChange={(event) => setNumber('travelFeeAmount', event.target.value)} /></label><label>Pricing readiness<select value={draft.pricingReadiness} onChange={(event) => setField('pricingReadiness', event.target.value)}><option>Needs operator pricing review</option><option>Ready</option><option>Blocked</option></select></label><label className="span-2">Pricing basis<textarea value={draft.pricingBasis} onChange={(event) => setField('pricingBasis', event.target.value)} /></label><label className="span-2">Change reason<textarea value={draft.changeReason} onChange={(event) => setField('changeReason', event.target.value)} /></label></div></div>
         <div className="editor-section"><div className="eyebrow">ADD-ONS</div><p className="field-help">One rule per line: name | flat or per unit | amount.</p><textarea className="addon-editor" value={draft.addOnRules.map((item) => `${item.name} | ${item.valueType} | ${item.price}`).join('\n')} onChange={(event) => setField('addOnRules', event.target.value.split('\n').filter(Boolean).map((line) => { const [name, valueType, price] = line.split('|').map((part) => part.trim()); return { name, valueType: valueType || 'flat', price: Number(price) || 0 } }))} /> </div>
         <div className="editor-section preview-section"><div><div className="eyebrow">PREVIEW DRAFT</div><p className="field-help">Test the current draft without publishing it.</p></div><div className="preview-controls"><label>Sample size<input type="number" value={sampleSize} onChange={(event) => setSampleSize(event.target.value)} /></label><label>Condition<select value={sampleCondition} onChange={(event) => setSampleCondition(event.target.value)}><option>Standard</option><option>Heavy</option><option>Extreme</option></select></label><label>Frequency<select value={sampleFrequency} onChange={(event) => setSampleFrequency(event.target.value)}><option>One-time</option><option>Recurring</option></select></label><button className="button button-dark" onClick={runPreview}>Preview estimate</button></div>{preview && <div className="preview-result"><strong>${preview.low.toLocaleString()}–${preview.high.toLocaleString()}</strong><span>{preview.breakdown.join(' · ')}</span></div>}</div>
@@ -729,6 +758,9 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
   const [preview, setPreview] = useState<Estimate | null>(null)
   const [sampleSize, setSampleSize] = useState('4')
   const [sampleLocation, setSampleLocation] = useState('55401')
+  const [sampleCondition, setSampleCondition] = useState('Standard')
+  const [sampleFrequency, setSampleFrequency] = useState('One-time')
+  const [sampleAddOns, setSampleAddOns] = useState<string[]>([])
 
   const load = useCallback(async () => {
     try {
@@ -749,6 +781,7 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
     const next = cards.find((card) => card.id === selectedId) ?? null
     setDraft(next ? { ...next, postalCodes: [...next.postalCodes], addOnRules: next.addOnRules.map((item) => ({ ...item })) } : null)
     setPreview(null)
+    setSampleAddOns([])
   }, [cards, selectedId])
 
   const visible = cards.filter((card) => {
@@ -757,6 +790,15 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
   })
   const setField = <K extends keyof RateCard>(key: K, value: RateCard[K]) => setDraft((current) => current ? { ...current, [key]: value } : current)
   const setNumber = (key: keyof RateCard, value: string) => setField(key, value === '' ? null : Number(value) as never)
+  const pricingErrors = (card: RateCard) => {
+    const errors: string[] = []
+    if (card.basePrice != null && card.basePrice < 0) errors.push('Base price cannot be negative.')
+    if (card.unitRate != null && card.unitRate < 0) errors.push('Unit rate cannot be negative.')
+    if (card.minimumPrice != null && card.minimumPrice < 0) errors.push('Minimum price cannot be negative.')
+    if (card.estimateSpread != null && (card.estimateSpread < 0 || card.estimateSpread > 1)) errors.push('Estimate range must be between 0 and 1.')
+    if ([card.standardMultiplier, card.heavyMultiplier, card.extremeMultiplier, card.recurringMultiplier].some((value) => value != null && value <= 0)) errors.push('Condition and frequency adjustments must be greater than zero.')
+    return errors
+  }
 
   const create = async () => {
     if (!newServiceId) { setError('Choose a service before creating a rate card.'); return }
@@ -796,6 +838,9 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
 
   const publish = async () => {
     if (!draft) return
+    const validation = pricingErrors(draft)
+    if (validation.length) { setError(validation.join(' ')); return }
+    if (!window.confirm(`Publish ${draft.name} ${draft.version} for ${draft.locationName}? This changes the pricing available to operators and may affect new estimates.`)) return
     setBusy(true)
     try {
       const saved = draft.status === 'Draft' ? await saveRateCard(draft.id, draft) : draft
@@ -809,6 +854,7 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
 
   const archive = async () => {
     if (!draft) return
+    if (!window.confirm(`Archive ${draft.name} ${draft.version}? Existing quote snapshots remain unchanged.`)) return
     setBusy(true)
     try {
       const archived = await archiveRateCard(draft.id)
@@ -821,7 +867,7 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
   const runPreview = async () => {
     if (!draft) return
     try {
-      setPreview(await previewRateCard(draft.id, { size: Number(sampleSize), condition: 'Standard', frequency: 'One-time', addOns: draft.addOnRules.map((item) => item.name).slice(0, 1), location: sampleLocation }))
+      setPreview(await previewRateCard(draft.id, { size: Number(sampleSize), condition: sampleCondition, frequency: sampleFrequency, addOns: sampleAddOns, location: sampleLocation }))
       setError('')
     } catch (caught) { setError((caught as ApiError).message) }
   }
@@ -845,7 +891,7 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
         <div className="editor-section"><div className="eyebrow">RATE SCOPE</div><div className="editor-fields"><label>Rate card name<input disabled={draft.status === 'Published'} value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Pricing method<select disabled={draft.status === 'Published'} value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per unit</option><option>Per room</option><option>Per square foot</option><option>Hourly</option><option>Custom quote</option></select></label><label>Service area<input disabled={draft.status === 'Published'} value={draft.locationName} onChange={(event) => setField('locationName', event.target.value)} /></label><label>Postal codes<input disabled={draft.status === 'Published'} value={draft.postalCodes.join(', ')} onChange={(event) => setField('postalCodes', event.target.value.split(',').map((item) => item.trim()).filter(Boolean))} placeholder="Blank = default rate" /></label></div><p className="field-help">Leave postal codes blank for the default service-area rate. A matching postal-code rate takes priority.</p></div>
         <div className="editor-section"><div className="eyebrow">AMOUNTS</div><div className="editor-fields pricing-fields"><label>Base price<input disabled={draft.status === 'Published'} type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} /></label><label>Unit rate<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} /></label><label>Minimum price<input disabled={draft.status === 'Published'} type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} /></label><label>Estimate spread<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} /></label><label>Travel fee<input disabled={draft.status === 'Published'} type="number" value={draft.travelFeeAmount ?? ''} onChange={(event) => setNumber('travelFeeAmount', event.target.value)} /></label><label>Size label<input disabled={draft.status === 'Published'} value={draft.sizeInputLabel} onChange={(event) => setField('sizeInputLabel', event.target.value)} /></label></div></div>
         <div className="editor-section"><div className="eyebrow">ADJUSTMENTS</div><div className="editor-fields pricing-fields"><label>Standard multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.standardMultiplier ?? ''} onChange={(event) => setNumber('standardMultiplier', event.target.value)} /></label><label>Heavy multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.heavyMultiplier ?? ''} onChange={(event) => setNumber('heavyMultiplier', event.target.value)} /></label><label>Extreme multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.extremeMultiplier ?? ''} onChange={(event) => setNumber('extremeMultiplier', event.target.value)} /></label><label>Recurring multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.recurringMultiplier ?? ''} onChange={(event) => setNumber('recurringMultiplier', event.target.value)} /></label></div><p className="field-help">Use 1.00 for no adjustment. Add-ons remain attached to the service and are priced in the service editor for now.</p></div>
-        <div className="editor-section preview-section"><div><div className="eyebrow">TEST THE RATE</div><p className="field-help">Run a sample before publishing. Published rates are locked; create a new version to change them.</p></div><div className="preview-controls"><label>Sample {draft.sizeInputLabel}<input type="number" value={sampleSize} onChange={(event) => setSampleSize(event.target.value)} /></label><label>Postal code<input value={sampleLocation} onChange={(event) => setSampleLocation(event.target.value)} /></label><button className="button button-dark" onClick={runPreview}>Preview estimate</button></div>{preview && <div className="preview-result"><strong>${preview.low.toLocaleString()}–${preview.high.toLocaleString()}</strong><span>{preview.breakdown.join(' · ')}</span></div>}</div>
+         <div className="editor-section preview-section"><div><div className="eyebrow">TEST THE RATE</div><p className="field-help">Test representative scenarios before publishing. This is an internal estimate preview, not a customer quote.</p></div><div className="preview-controls"><label>Sample {draft.sizeInputLabel}<input type="number" min="1" value={sampleSize} onChange={(event) => setSampleSize(event.target.value)} /></label><label>Condition<select value={sampleCondition} onChange={(event) => setSampleCondition(event.target.value)}><option>Standard</option><option>Heavy</option><option>Extreme</option></select></label><label>Frequency<select value={sampleFrequency} onChange={(event) => setSampleFrequency(event.target.value)}><option>One-time</option><option>Recurring</option></select></label><label>Postal code<input value={sampleLocation} onChange={(event) => setSampleLocation(event.target.value)} /></label><button className="button button-dark" type="button" onClick={runPreview}>Preview estimate</button></div>{draft.addOnRules.length > 0 && <fieldset className="preview-addons"><legend>Test add-ons</legend>{draft.addOnRules.map((rule) => <label key={rule.name} className="checkbox-row"><input type="checkbox" checked={sampleAddOns.includes(rule.name)} onChange={(event) => setSampleAddOns((current) => event.target.checked ? [...current, rule.name] : current.filter((item) => item !== rule.name))} />{rule.name}</label>)}</fieldset>}{preview && <div className="preview-result" aria-live="polite"><strong>${preview.low.toLocaleString()}–${preview.high.toLocaleString()}</strong><span>{preview.breakdown.join(' · ')} · {draft.version}</span></div>}</div>
       </section>}
     </div>
   </div>
@@ -889,7 +935,7 @@ function Status({ status }: { status: RequestStatus }) {
   return <span className={`status ${status.toLowerCase().replace(/ /g, '-')}`}><i />{status}</span>
 }
 
-function MvpAcceptanceWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
+function MvpAcceptanceWorkflow({ lead, onUpdate, onNotice }: { lead: Lead, onUpdate: (lead: Lead, input: Partial<Lead>) => void, onNotice: (message: string) => void }) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -916,7 +962,7 @@ function MvpAcceptanceWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead
 
   const save = async (action: () => Promise<unknown>, message: string, leadUpdate?: Partial<Lead>) => {
     setBusy(true); setError('')
-    try { await action(); await load(); if (leadUpdate) onUpdate(lead, leadUpdate); setAcceptanceNote(''); setError(''); window.dispatchEvent(new CustomEvent('workflow-notice', { detail: message })) }
+    try { await action(); await load(); if (leadUpdate) onUpdate(lead, leadUpdate); setAcceptanceNote(''); setError(''); onNotice(message) }
     catch (caught) { setError((caught as ApiError).message) }
     finally { setBusy(false) }
   }
@@ -932,6 +978,7 @@ function MvpAcceptanceWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead
     <div className="workflow-block">
       <div className="workflow-block-heading"><span>MVP ACCEPTANCE READINESS</span><small>{isCommercial ? 'Commercial assessment required' : 'Residential qualification'}</small></div>
       <div className="mvp-readiness-grid"><span className={assessmentReady ? 'ready' : 'not-ready'}>{assessmentReady ? 'Ready' : 'Needs'} assessment</span><span className={scopeReady ? 'ready' : 'not-ready'}>{scopeReady ? 'Ready' : 'Needs'} scope</span><span className={quoteReady ? 'ready' : 'not-ready'}>{quoteReady ? 'Ready' : 'Needs'} pricing version</span></div>
+      <div className="readiness-list"><span className={assessmentReady ? 'ready' : 'not-ready'}><b>{assessmentReady ? '✓' : '!'}</b>{isCommercial ? 'Commercial evidence complete' : 'Assessment path sufficient'}</span><span className={scopeReady ? 'ready' : 'not-ready'}><b>{scopeReady ? '✓' : '!'}</b>Scope and assumptions recorded</span><span className={quoteReady ? 'ready' : 'not-ready'}><b>{quoteReady ? '✓' : '!'}</b>Rate-card version attached</span><span className="not-ready"><b>!</b>Customer decision still needed</span></div>
       <p className="field-help">This MVP ends when the operator has enough evidence, scope, pricing, and customer acceptance to safely accept the job. Scheduling, handoff, delivery, quality, and repeat-service controls are shelved.</p>
     </div>
     <div className="workflow-block">
@@ -953,7 +1000,7 @@ function MvpAcceptanceWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead
     <div className="workflow-block">
       <div className="workflow-block-heading"><span>CUSTOMER DECISION</span><small>Acceptance must reference the saved quote version</small></div>
       <label>Acceptance evidence<textarea rows={2} value={acceptanceNote} onChange={(event) => setAcceptanceNote(event.target.value)} placeholder="Customer name, channel, date, and exact approval or decline statement..." /></label>
-      <div className="hero-actions"><button className="button button-quiet" disabled={busy || !acceptanceNote.trim()} onClick={() => save(() => updateQuoteStatus(workflow.quote.id, { status: 'Declined', decisionNote: acceptanceNote }), 'Quote decision recorded.', { quoteStatus: 'Declined' })}>Record declined</button><button className="button button-dark" disabled={busy || !acceptanceNote.trim() || !assessmentReady || !scopeReady || !quoteReady} onClick={() => save(() => updateQuoteStatus(workflow.quote.id, { status: 'Accepted', decisionNote: acceptanceNote }), 'Quote accepted. MVP acceptance is complete.', { status: 'Accepted', quoteStatus: 'Accepted' })}>Accept job</button></div>
+      <div className="hero-actions"><button className="button button-quiet" disabled={busy || !acceptanceNote.trim()} onClick={() => save(() => updateQuoteStatus(workflow.quote.id, { status: 'Declined', decisionNote: acceptanceNote }), 'Quote decision recorded.', { quoteStatus: 'Declined' })}>Record declined</button><button className="button button-dark" disabled={busy || !acceptanceNote.trim() || !assessmentReady || !scopeReady || !quoteReady} onClick={() => save(() => updateQuoteStatus(workflow.quote.id, { status: 'Accepted', decisionNote: acceptanceNote }), 'Quote accepted. MVP acceptance is complete.', { status: 'Accepted', quoteStatus: 'Accepted' })}>Record quote acceptance</button></div>
     </div>
   </div>
 }
@@ -1056,7 +1103,7 @@ function OperationalWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: 
   </div>
 }
 
-function LeadDetail({ lead, onAdvance, onUpdate }: { lead: Lead, onAdvance: (lead: Lead) => void, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
+function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdvance: (lead: Lead) => void, onUpdate: (lead: Lead, input: Partial<Lead>) => void, onNotice: (message: string) => void }) {
   const [activityNote, setActivityNote] = useState('')
   const [draft, setDraft] = useState({
     assessmentType: lead.assessmentType,
@@ -1091,6 +1138,15 @@ function LeadDetail({ lead, onAdvance, onUpdate }: { lead: Lead, onAdvance: (lea
     onUpdate(lead, { ...draft, activityNote, activityChannel: 'internal' } as Partial<Lead> & { activityNote: string, activityChannel: string })
     setActivityNote('')
   }
+  const commercialRequest = /commercial|office|retail|medical|school|facility/i.test(`${lead.service} ${lead.property}`)
+  const missing = [
+    !lead.location && 'service location',
+    !lead.scope && 'customer scope',
+    !lead.accessNotes && 'access details',
+    !lead.customerExpectations && 'success criteria',
+  ].filter(Boolean) as string[]
+  const risk = lead.condition === 'Extreme' || /hazard|bio|mold|damage|post-construction|disaster/i.test(`${lead.scope} ${lead.service}`)
+  const recommendation = risk ? 'Pause and clarify risk before pricing' : commercialRequest ? 'Complete a commercial assessment' : lead.status === 'New' ? 'Qualify the request' : lead.assessmentType === 'quick' ? 'Confirm quick-estimate evidence' : 'Complete the selected assessment'
 
   return <div className="lead-detail">
     <div className="detail-top">
@@ -1118,9 +1174,14 @@ function LeadDetail({ lead, onAdvance, onUpdate }: { lead: Lead, onAdvance: (lea
       <p>Preferred timing: {lead.timing}</p>
     </div>
 
-    <div className="workflow-block">
+    <div className="decision-strip" role="region" aria-label="Request decision summary">
+      <div className="decision-strip-main"><span className="eyebrow">DO THIS NEXT</span><strong>{recommendation}</strong><p>{commercialRequest ? 'Commercial work needs evidence before a firm quote.' : risk ? 'Do not rely on the illustrative estimate while a risk is unresolved.' : 'Use the checklist below to turn this request into a clear customer decision.'}</p></div>
+      <div className="decision-strip-facts"><span><b>Known</b>{lead.scope || 'Basic request details only'}</span><span><b>{missing.length ? 'Still needed' : 'Ready facts'}</b>{missing.length ? missing.join(', ') : 'Core request context recorded'}</span><span className={risk ? 'risk-flag' : ''}><b>{risk ? 'Risk flag' : 'Confidence'}</b>{risk ? 'Review before quote' : lead.assessmentConfidence}</span></div>
+    </div>
+
+    <div className="workflow-block legacy-context-block">
       <div className="workflow-block-heading"><span>NEXT ACTION</span><small>{draft.nextActionDue ? `Due ${draft.nextActionDue}` : 'No due date'}</small></div>
-      <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}><option>New</option><option>Qualifying</option><option>Waiting for Customer</option><option>Assessment Needed</option><option>Assessment Complete</option><option>Quote Draft</option><option>Quote Sent</option><option>Follow-up Due</option><option>Accepted</option><option>Scheduling</option><option>Scheduled</option><option>In Progress</option><option>Needs Approval</option><option>Quality Check</option><option>Completed</option><option>Unsupported</option><option>Declined</option><option>Expired</option><option>Cancelled</option></select></label>
+       <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}>{[lead.status, ...lead.allowedTransitions.filter((status) => status !== lead.status)].map((status) => <option key={status}>{status}</option>)}</select></label>
       <label>Action<input value={draft.nextAction} onChange={(event) => setField('nextAction', event.target.value)} placeholder="Request photos, schedule walkthrough..." /></label>
       <label>Due date<input type="date" value={draft.nextActionDue} onChange={(event) => setField('nextActionDue', event.target.value)} /></label>
     </div>
@@ -1154,14 +1215,14 @@ function LeadDetail({ lead, onAdvance, onUpdate }: { lead: Lead, onAdvance: (lea
       <button className="button button-quiet workflow-save" onClick={saveWorkflow}>Save workflow context</button>
     </div>
 
-    <MvpAcceptanceWorkflow lead={lead} onUpdate={onUpdate} />
+    <MvpAcceptanceWorkflow lead={lead} onUpdate={onUpdate} onNotice={onNotice} />
 
     {lead.activity.length > 0 && <div className="activity-list"><div className="eyebrow">RECENT ACTIVITY</div>{lead.activity.slice(0, 5).map((event, index) => <div className="activity-item" key={`${event.created}-${index}`}><strong>{event.type === 'status' ? `${event.fromStatus || 'Created'} → ${event.toStatus}` : event.type}</strong><small>{formatTimestamp(event.created)} · {event.channel}</small>{event.note && <p>{event.note}</p>}</div>)}</div>}
 
     <div className="detail-actions">
       <span>Move request forward</span>
-      <button onClick={() => onAdvance(lead)} disabled={lead.status === 'Completed'}>
-         {lead.status === 'Completed' ? 'Completed' : `Next: ${NEXT_LABEL[lead.status] || 'Update request'}`} <span>→</span>
+      <button onClick={() => onAdvance(lead)} disabled={lead.status === 'Completed' || lead.status === 'Accepted'}>
+         {lead.status === 'Completed' ? 'Completed' : lead.status === 'Accepted' ? 'Acceptance recorded' : `Next: ${NEXT_LABEL[lead.status] || 'Update request'}`} <span>→</span>
       </button>
     </div>
   </div>

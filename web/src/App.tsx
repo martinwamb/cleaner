@@ -77,6 +77,21 @@ function isPastDue(value: string) {
   return !Number.isNaN(due.getTime()) && due.getTime() < Date.now()
 }
 
+function missingInformationFor(lead: Lead) {
+  return [
+    !lead.location && 'location',
+    !lead.scope && 'scope',
+    !lead.accessNotes && 'access',
+    !lead.customerExpectations && 'success criteria',
+  ].filter(Boolean) as string[]
+}
+
+function dueSortValue(lead: Lead) {
+  if (!lead.nextActionDue) return Number.POSITIVE_INFINITY
+  const due = new Date(`${lead.nextActionDue}T23:59:59`).getTime()
+  return Number.isNaN(due) ? Number.POSITIVE_INFINITY : due
+}
+
 function App() {
   const [view, setView] = useState<View>('home')
   const [catalog, setCatalog] = useState<Catalog | null>(null)
@@ -508,7 +523,9 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
     acceptance: leads.filter(FILTERS['Acceptance due']).length,
   }), [leads])
 
-  const visible = useMemo(() => leads.filter(FILTERS[filter]), [leads, filter])
+  const visible = useMemo(() => [...leads]
+    .filter(FILTERS[filter])
+    .sort((left, right) => dueSortValue(left) - dueSortValue(right) || right.updated.localeCompare(left.updated)), [leads, filter])
   const selectedLead = leads.find((lead) => lead.id === selectedId) ?? null
 
   const onAdvance = async (lead: Lead) => {
@@ -583,10 +600,10 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
         <div className="request-table">
           {visible.length === 0 && <p className="loading-note">No requests in this view yet.</p>}
           {visible.map((lead) => (
-            <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} aria-pressed={selectedId === lead.id} key={lead.id} onClick={() => setSelectedId(lead.id)}>
+            <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} aria-pressed={selectedId === lead.id} aria-label={`${lead.id}, ${lead.customer}, ${lead.nextAction}${lead.nextActionDue ? ` due ${lead.nextActionDue}` : ''}`} key={lead.id} onClick={() => setSelectedId(lead.id)}>
               <span className="request-id">{lead.id}<small>{formatTimestamp(lead.created)}</small></span>
               <span className="request-customer"><strong>{lead.customer}</strong><small>{lead.organization}</small></span>
-               <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small><small className={`request-next-action ${isPastDue(lead.nextActionDue) ? 'past-due' : ''}`}>Next: {lead.nextAction}{lead.nextActionDue ? ` · ${lead.nextActionDue}` : ''}</small></span>
+              <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small><small className={`request-next-action ${isPastDue(lead.nextActionDue) ? 'past-due' : ''}`}>Next: {lead.nextAction}{lead.nextActionDue ? ` · ${lead.nextActionDue}` : ''}</small><small className="request-owner">Owner: {lead.nextActionOwner || 'Operator'}</small>{missingInformationFor(lead).length > 0 && <small className="request-missing">Missing: {missingInformationFor(lead).join(', ')}</small>}</span>
               <span className={`priority ${lead.priority.toLowerCase()}`}>{lead.priority}</span>
               <Status status={lead.status} />
             </button>
@@ -1111,6 +1128,7 @@ function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdv
     assessmentConfidence: lead.assessmentConfidence,
     nextAction: lead.nextAction,
     nextActionDue: lead.nextActionDue,
+    nextActionOwner: lead.nextActionOwner,
     accessNotes: lead.accessNotes,
     lastCleaned: lead.lastCleaned,
     customerExpectations: lead.customerExpectations,
@@ -1125,6 +1143,7 @@ function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdv
       assessmentConfidence: lead.assessmentConfidence,
       nextAction: lead.nextAction,
       nextActionDue: lead.nextActionDue,
+      nextActionOwner: lead.nextActionOwner,
       accessNotes: lead.accessNotes,
       lastCleaned: lead.lastCleaned,
       customerExpectations: lead.customerExpectations,
@@ -1139,12 +1158,7 @@ function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdv
     setActivityNote('')
   }
   const commercialRequest = /commercial|office|retail|medical|school|facility/i.test(`${lead.service} ${lead.property}`)
-  const missing = [
-    !lead.location && 'service location',
-    !lead.scope && 'customer scope',
-    !lead.accessNotes && 'access details',
-    !lead.customerExpectations && 'success criteria',
-  ].filter(Boolean) as string[]
+  const missing = missingInformationFor(lead).map((item) => item === 'location' ? 'service location' : item === 'scope' ? 'customer scope' : item === 'access' ? 'access details' : item)
   const risk = lead.condition === 'Extreme' || /hazard|bio|mold|damage|post-construction|disaster/i.test(`${lead.scope} ${lead.service}`)
   const recommendation = risk ? 'Pause and clarify risk before pricing' : commercialRequest ? 'Complete a commercial assessment' : lead.status === 'New' ? 'Qualify the request' : lead.assessmentType === 'quick' ? 'Confirm quick-estimate evidence' : 'Complete the selected assessment'
 
@@ -1179,11 +1193,12 @@ function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdv
       <div className="decision-strip-facts"><span><b>Known</b>{lead.scope || 'Basic request details only'}</span><span><b>{missing.length ? 'Still needed' : 'Ready facts'}</b>{missing.length ? missing.join(', ') : 'Core request context recorded'}</span><span className={risk ? 'risk-flag' : ''}><b>{risk ? 'Risk flag' : 'Confidence'}</b>{risk ? 'Review before quote' : lead.assessmentConfidence}</span></div>
     </div>
 
-    <div className="workflow-block legacy-context-block">
+    <div className="workflow-block next-action-card">
       <div className="workflow-block-heading"><span>NEXT ACTION</span><small>{draft.nextActionDue ? `Due ${draft.nextActionDue}` : 'No due date'}</small></div>
-       <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}>{[lead.status, ...lead.allowedTransitions.filter((status) => status !== lead.status)].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}>{[lead.status, ...lead.allowedTransitions.filter((status) => status !== lead.status)].map((status) => <option key={status}>{status}</option>)}</select></label>
       <label>Action<input value={draft.nextAction} onChange={(event) => setField('nextAction', event.target.value)} placeholder="Request photos, schedule walkthrough..." /></label>
-      <label>Due date<input type="date" value={draft.nextActionDue} onChange={(event) => setField('nextActionDue', event.target.value)} /></label>
+      <div className="two-col compact-fields"><label>Due date<input type="date" value={draft.nextActionDue} onChange={(event) => setField('nextActionDue', event.target.value)} /></label><label>Owner<input value={draft.nextActionOwner} onChange={(event) => setField('nextActionOwner', event.target.value)} placeholder="Operator or teammate" /></label></div>
+      <button className="button button-quiet workflow-save" onClick={saveWorkflow}>Save next action</button>
     </div>
 
     <div className="workflow-block">

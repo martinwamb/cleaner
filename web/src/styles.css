@@ -142,6 +142,8 @@ i { font-family: 'Playfair Display', serif; font-weight: 500; }.hero-intro { max
 .workflow-save { justify-self: start; }
 .request-next-action { color: var(--clay) !important; }
 .request-next-action.past-due { color: #9b3623 !important; font-weight: 700; }
+.request-owner { color: var(--muted) !important; }
+.request-missing { color: #9b3623 !important; font-weight: 600; }
 .activity-list { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
 .activity-item { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .activity-item strong { font-size: 12px; }
@@ -150,6 +152,7 @@ i { font-family: 'Playfair Display', serif; font-weight: 500; }.hero-intro { max
 .workflow-suite { display: grid; gap: 2px; margin-top: 18px; }
 .workflow-suite .workflow-block { margin: 0; background: #fbf9f3; }
 .lead-detail > .workflow-block { display: none; }
+.lead-detail > .next-action-card { display: grid; }
 .decision-strip { display: grid; gap: 14px; margin: 18px 0 2px; padding: 16px; background: var(--ink); color: var(--paper); }
 .decision-strip-main { display: grid; gap: 6px; }
 .decision-strip-main .eyebrow { color: #b8c4aa; }

@@ -889,6 +889,75 @@ function Status({ status }: { status: RequestStatus }) {
   return <span className={`status ${status.toLowerCase().replace(/ /g, '-')}`}><i />{status}</span>
 }
 
+function MvpAcceptanceWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [assessment, setAssessment] = useState({ type: lead.assessmentType, status: lead.assessmentStatus, confidence: lead.assessmentConfidence, findings: '', measurements: '' })
+  const [quote, setQuote] = useState({ scope: lead.scope, inclusions: '', exclusions: '', assumptions: '', amount: '', rateCardVersion: '' })
+  const [acceptanceNote, setAcceptanceNote] = useState('')
+  const isCommercial = /commercial|office|retail|medical|school|facility/i.test(`${lead.service} ${lead.property}`)
+
+  const load = useCallback(async () => {
+    try {
+      const next = await getWorkflow(lead.id)
+      setWorkflow(next)
+      const version = next.quote.versions[0]
+      if (version) setQuote({ scope: version.scope || lead.scope, inclusions: version.inclusions || '', exclusions: version.exclusions || '', assumptions: version.assumptions || '', amount: version.amount == null ? '' : String(version.amount), rateCardVersion: version.rate_card_version || '' })
+      setError('')
+    }
+    catch (caught) { setError((caught as ApiError).message) }
+  }, [lead.id])
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    setAssessment({ type: lead.assessmentType, status: lead.assessmentStatus, confidence: lead.assessmentConfidence, findings: '', measurements: '' })
+    setQuote((current) => ({ ...current, scope: lead.scope }))
+  }, [lead.id, lead.updated])
+
+  const save = async (action: () => Promise<unknown>, message: string, leadUpdate?: Partial<Lead>) => {
+    setBusy(true); setError('')
+    try { await action(); await load(); if (leadUpdate) onUpdate(lead, leadUpdate); setAcceptanceNote(''); setError(''); window.dispatchEvent(new CustomEvent('workflow-notice', { detail: message })) }
+    catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  if (!workflow) return <div className="workflow-block"><span>Loading MVP acceptance workflow...</span>{error && <small>{error}</small>}</div>
+  const latestQuote = workflow.quote.versions[0]
+  const assessmentReady = assessment.status === 'Complete' || (!isCommercial && assessment.type === 'quick')
+  const scopeReady = Boolean(quote.scope.trim() && quote.inclusions.trim() && quote.exclusions.trim() && quote.assumptions.trim())
+  const quoteReady = Boolean(latestQuote && latestQuote.rate_card_version)
+
+  return <div className="workflow-suite">
+    {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>MVP ACCEPTANCE READINESS</span><small>{isCommercial ? 'Commercial assessment required' : 'Residential qualification'}</small></div>
+      <div className="mvp-readiness-grid"><span className={assessmentReady ? 'ready' : 'not-ready'}>{assessmentReady ? 'Ready' : 'Needs'} assessment</span><span className={scopeReady ? 'ready' : 'not-ready'}>{scopeReady ? 'Ready' : 'Needs'} scope</span><span className={quoteReady ? 'ready' : 'not-ready'}>{quoteReady ? 'Ready' : 'Needs'} pricing version</span></div>
+      <p className="field-help">This MVP ends when the operator has enough evidence, scope, pricing, and customer acceptance to safely accept the job. Scheduling, handoff, delivery, quality, and repeat-service controls are shelved.</p>
+    </div>
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>QUALIFICATION AND ASSESSMENT</span><small>{workflow.assessments.length} saved assessment records</small></div>
+      <div className="two-col compact-fields"><label>Customer type<select value={isCommercial ? 'commercial' : 'residential'} disabled><option value="residential">Residential</option><option value="commercial">Commercial</option></select></label><label>Assessment path<select value={assessment.type} onChange={(event) => setAssessment((current) => ({ ...current, type: event.target.value as typeof current.type }))}><option value="quick">Quick estimate</option><option value="photos">Customer photos</option><option value="video">Customer video</option><option value="walkthrough">On-site walkthrough</option><option value="formal-survey">Formal survey</option></select></label></div>
+      <div className="two-col compact-fields"><label>Status<select value={assessment.status} onChange={(event) => setAssessment((current) => ({ ...current, status: event.target.value }))}><option>Not started</option><option>Requested</option><option>In progress</option><option>Complete</option></select></label><label>Confidence<select value={assessment.confidence} onChange={(event) => setAssessment((current) => ({ ...current, confidence: event.target.value }))}><option>Unassessed</option><option>Low</option><option>Medium</option><option>High</option></select></label></div>
+      <label>Findings and evidence<textarea rows={3} value={assessment.findings} onChange={(event) => setAssessment((current) => ({ ...current, findings: event.target.value }))} placeholder="Areas covered, photos/video reviewed, hazards, unknowns, and limitations..." /></label>
+      <label>Measurements and operating requirements<textarea rows={2} value={assessment.measurements} onChange={(event) => setAssessment((current) => ({ ...current, measurements: event.target.value }))} placeholder="Square footage, rooms, fixtures, service windows, access, or security requirements..." /></label>
+      <button className="button button-quiet workflow-save" disabled={busy} onClick={() => save(() => createAssessment(lead.id, assessment).then(() => undefined), 'Assessment saved.')}>Save assessment</button>
+    </div>
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>SCOPE AND QUOTE</span><small>{workflow.quote.status} · v{workflow.quote.current_version}</small></div>
+      <label>Included scope<textarea rows={3} value={quote.scope} onChange={(event) => setQuote((current) => ({ ...current, scope: event.target.value }))} placeholder="Areas, tasks, quantities, frequency, and desired outcome..." /></label>
+      <div className="two-col compact-fields"><label>Inclusions<textarea rows={2} value={quote.inclusions} onChange={(event) => setQuote((current) => ({ ...current, inclusions: event.target.value }))} /></label><label>Exclusions<textarea rows={2} value={quote.exclusions} onChange={(event) => setQuote((current) => ({ ...current, exclusions: event.target.value }))} /></label></div>
+      <div className="two-col compact-fields"><label>Assumptions and preparation<textarea rows={2} value={quote.assumptions} onChange={(event) => setQuote((current) => ({ ...current, assumptions: event.target.value }))} /></label><label>Rate-card version<input value={quote.rateCardVersion} onChange={(event) => setQuote((current) => ({ ...current, rateCardVersion: event.target.value }))} placeholder="e.g. v1.0" /></label></div>
+      <label>Firm amount, if known<input type="number" value={quote.amount} onChange={(event) => setQuote((current) => ({ ...current, amount: event.target.value }))} placeholder="Optional; estimate ranges remain valid" /></label>
+      <button className="button button-quiet workflow-save" disabled={busy} onClick={() => save(() => createQuoteVersion(lead.id, { ...quote, amount: quote.amount ? Number(quote.amount) : null, pricingSnapshot: lead.estimate }).then(() => undefined), 'Quote version saved.', { quoteStatus: 'Draft' })}>Save quote version</button>
+    </div>
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>CUSTOMER DECISION</span><small>Acceptance must reference the saved quote version</small></div>
+      <label>Acceptance evidence<textarea rows={2} value={acceptanceNote} onChange={(event) => setAcceptanceNote(event.target.value)} placeholder="Customer name, channel, date, and exact approval or decline statement..." /></label>
+      <div className="hero-actions"><button className="button button-quiet" disabled={busy || !acceptanceNote.trim()} onClick={() => save(() => updateQuoteStatus(workflow.quote.id, { status: 'Declined', decisionNote: acceptanceNote }), 'Quote decision recorded.', { quoteStatus: 'Declined' })}>Record declined</button><button className="button button-dark" disabled={busy || !acceptanceNote.trim() || !assessmentReady || !scopeReady || !quoteReady} onClick={() => save(() => updateQuoteStatus(workflow.quote.id, { status: 'Accepted', decisionNote: acceptanceNote }), 'Quote accepted. MVP acceptance is complete.', { status: 'Accepted', quoteStatus: 'Accepted' })}>Accept job</button></div>
+    </div>
+  </div>
+}
+
 function OperationalWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
   const conversationTemplates = {
     'Request photos': 'Could you send a few photos of the main areas, surfaces, and any access constraints? That will help us confirm the scope.',
@@ -1085,7 +1154,7 @@ function LeadDetail({ lead, onAdvance, onUpdate }: { lead: Lead, onAdvance: (lea
       <button className="button button-quiet workflow-save" onClick={saveWorkflow}>Save workflow context</button>
     </div>
 
-    <OperationalWorkflow lead={lead} onUpdate={onUpdate} />
+    <MvpAcceptanceWorkflow lead={lead} onUpdate={onUpdate} />
 
     {lead.activity.length > 0 && <div className="activity-list"><div className="eyebrow">RECENT ACTIVITY</div>{lead.activity.slice(0, 5).map((event, index) => <div className="activity-item" key={`${event.created}-${index}`}><strong>{event.type === 'status' ? `${event.fromStatus || 'Created'} → ${event.toStatus}` : event.type}</strong><small>{formatTimestamp(event.created)} · {event.channel}</small>{event.note && <p>{event.note}</p>}</div>)}</div>}
 

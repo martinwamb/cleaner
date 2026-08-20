@@ -21,6 +21,10 @@ const recordEvent = db.prepare(`
   INSERT INTO request_events (request_id, operator_id, from_status, to_status, event_type, channel, note)
   VALUES (?, ?, ?, ?, ?, ?, ?)
 `);
+const shelved = (res, feature) => res.status(410).json({
+  error: `${feature} is shelved for the MVP acceptance workflow.`,
+  status: 'Shelved for MVP',
+});
 
 function ensureCustomerProperty(row) {
   let customer = row.customer_id ? db.prepare('SELECT * FROM customers WHERE id = ?').get(row.customer_id) : null;
@@ -130,14 +134,27 @@ router.patch('/quotes/:id', requireOperator, (req, res) => {
   const statuses = ['Draft', 'Sent', 'Follow-up due', 'Accepted', 'Declined', 'Expired', 'Revised'];
   if (input.status && !statuses.includes(input.status)) return res.status(400).json({ error: 'Unknown quote status.' });
   const status = input.status || quote.status;
-  db.prepare("UPDATE quotes SET status = ?, sent_at = CASE WHEN ? = 'Sent' THEN datetime('now') ELSE sent_at END, decided_at = CASE WHEN ? IN ('Accepted', 'Declined') THEN datetime('now') ELSE decided_at END, decision_note = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(status, status, status, text(input.decisionNote), quote.id);
-  const row = db.prepare('SELECT request_id FROM quotes WHERE id = ?').get(quote.id);
-  db.prepare("UPDATE requests SET quote_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, row.request_id);
+  const row = db.prepare('SELECT * FROM requests WHERE id = ?').get(quote.request_id);
+  if (status === 'Accepted') {
+    const version = db.prepare('SELECT * FROM quote_versions WHERE quote_id = ? ORDER BY version DESC LIMIT 1').get(quote.id);
+    const commercial = /commercial|office|retail|medical|school|facility/i.test(`${row.service} ${row.property}`);
+    const assessmentReady = !commercial && row.assessment_type === 'quick'
+      || db.prepare("SELECT 1 FROM assessments WHERE request_id = ? AND status = 'Complete' LIMIT 1").get(row.id);
+    if (!assessmentReady) return res.status(409).json({ error: 'Complete the required assessment before accepting the job.' });
+    if (!version || !text(version.scope) || !text(version.inclusions) || !text(version.exclusions) || !text(version.assumptions) || !text(version.rate_card_version)) {
+      return res.status(409).json({ error: 'Complete scope, inclusions, exclusions, assumptions, and pricing version before accepting the job.' });
+    }
+    if (!text(input.decisionNote)) return res.status(400).json({ error: 'Record customer acceptance evidence before accepting the job.' });
+  }
+  db.prepare("UPDATE quotes SET status = ?, sent_at = CASE WHEN ? = 'Sent' THEN datetime('now') ELSE sent_at END, decided_at = CASE WHEN ? IN ('Accepted', 'Declined') THEN datetime('now') ELSE decided_at END, decision_note = ?, acceptance_channel = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(status, status, status, text(input.decisionNote), text(input.acceptanceChannel, 40) || (status === 'Accepted' ? 'operator-recorded' : ''), quote.id);
+  db.prepare("UPDATE requests SET quote_status = ?, updated_at = datetime('now') WHERE id = ?").run(status, row.id);
   res.json({ quote: db.prepare('SELECT * FROM quotes WHERE id = ?').get(quote.id) });
 });
 
 router.post('/requests/:reference/conversations', requireOperator, (req, res) => {
+  return shelved(res, 'Conversation integrations');
+  /* istanbul ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   if (!row) return res.status(404).json({ error: 'Request not found' });
   const input = req.body || {};
@@ -150,6 +167,8 @@ router.post('/requests/:reference/conversations', requireOperator, (req, res) =>
 });
 
 router.post('/requests/:reference/follow-ups', requireOperator, (req, res) => {
+  return shelved(res, 'Follow-up queue');
+  /* istanbul ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   if (!row) return res.status(404).json({ error: 'Request not found' });
   const input = req.body || {};
@@ -160,6 +179,8 @@ router.post('/requests/:reference/follow-ups', requireOperator, (req, res) => {
 });
 
 router.patch('/follow-ups/:id', requireOperator, (req, res) => {
+  return shelved(res, 'Follow-up queue');
+  /* istanbul ignore next -- preserved for future reactivation */
   const status = ['Open', 'Completed', 'Cancelled'].includes(req.body?.status) ? req.body.status : null;
   if (!status) return res.status(400).json({ error: 'Unknown follow-up status.' });
   db.prepare("UPDATE follow_ups SET status = ?, completed_at = CASE WHEN ? = 'Completed' THEN datetime('now') ELSE completed_at END WHERE id = ?").run(status, status, req.params.id);
@@ -167,6 +188,8 @@ router.patch('/follow-ups/:id', requireOperator, (req, res) => {
 });
 
 router.post('/requests/:reference/schedule', requireOperator, (req, res) => {
+  return shelved(res, 'Scheduling');
+  /* istanbul ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   if (!row) return res.status(404).json({ error: 'Request not found' });
   const input = req.body || {};
@@ -194,6 +217,8 @@ router.post('/requests/:reference/schedule', requireOperator, (req, res) => {
 });
 
 router.post('/requests/:reference/handoff', requireOperator, (req, res) => {
+  return shelved(res, 'Field handoff');
+  /* istan ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   if (!row) return res.status(404).json({ error: 'Request not found' });
   const job = jobFor(row.reference);
@@ -206,6 +231,8 @@ router.post('/requests/:reference/handoff', requireOperator, (req, res) => {
 });
 
 router.post('/requests/:reference/variances', requireOperator, (req, res) => {
+  return shelved(res, 'Scope variance');
+  /* istanbul ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   const job = row && jobFor(row.reference);
   if (!job) return res.status(409).json({ error: 'Schedule the work before recording a variance.' });
@@ -218,6 +245,8 @@ router.post('/requests/:reference/variances', requireOperator, (req, res) => {
 });
 
 router.patch('/variances/:id', requireOperator, (req, res) => {
+  return shelved(res, 'Scope variance');
+  /* istanbul ignore next -- preserved for future reactivation */
   const decision = ['Approved', 'Declined'].includes(req.body?.decision) ? req.body.decision : null;
   if (!decision) return res.status(400).json({ error: 'Decision must be Approved or Declined.' });
   db.prepare("UPDATE scope_variances SET status = ?, customer_decision = ?, decided_at = datetime('now') WHERE id = ?").run(decision, decision, req.params.id);
@@ -225,6 +254,8 @@ router.patch('/variances/:id', requireOperator, (req, res) => {
 });
 
 router.post('/requests/:reference/quality', requireOperator, (req, res) => {
+  return shelved(res, 'Quality review');
+  /* istanbul ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   const job = row && jobFor(row.reference);
   if (!job) return res.status(409).json({ error: 'Schedule the work before quality review.' });
@@ -238,6 +269,8 @@ router.post('/requests/:reference/quality', requireOperator, (req, res) => {
 });
 
 router.post('/requests/:reference/complete', requireOperator, (req, res) => {
+  return shelved(res, 'Job completion');
+  /* istanbul ignore next -- preserved for future reactivation */
   const row = requestFor(req.params.reference);
   const job = row && jobFor(row.reference);
   if (!job) return res.status(409).json({ error: 'Schedule the work before completing it.' });

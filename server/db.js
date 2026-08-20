@@ -229,6 +229,7 @@ db.exec(`
     sent_at       TEXT,
     decided_at    TEXT,
     decision_note TEXT NOT NULL DEFAULT '',
+    acceptance_channel TEXT NOT NULL DEFAULT '',
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -372,6 +373,7 @@ try { db.exec("ALTER TABLE request_events ADD COLUMN channel TEXT NOT NULL DEFAU
 try { db.exec("ALTER TABLE request_events ADD COLUMN note TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
 try { db.exec('ALTER TABLE requests ADD COLUMN customer_id INTEGER'); } catch { /* already migrated */ }
 try { db.exec('ALTER TABLE requests ADD COLUMN property_id INTEGER'); } catch { /* already migrated */ }
+try { db.exec("ALTER TABLE quotes ADD COLUMN acceptance_channel TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
 
 const seedCatalog = db.transaction(() => {
   if (db.prepare('SELECT COUNT(*) AS count FROM services').get().count > 0) return;

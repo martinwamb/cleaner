@@ -143,6 +143,11 @@ i { font-family: 'Playfair Display', serif; font-weight: 500; }.hero-intro { max
 .workflow-summary { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 11px; }
 .workflow-summary span { color: var(--muted); text-align: right; }
 .workflow-summary .text-button { font-size: 10px; margin-left: 8px; border-bottom: 1px solid var(--ink); }
+.mvp-readiness-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 4px 0 2px; }
+.mvp-readiness-grid span { padding: 10px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .04em; background: var(--paper); }
+.mvp-readiness-grid .ready { color: #35613a; background: #e0ecd9; }
+.mvp-readiness-grid .not-ready { color: #8c3d27; background: #f7e3dc; }
+@media (max-width: 520px) { .mvp-readiness-grid { grid-template-columns: 1fr; } }
 .service-catalog-management .service-editor > .editor-section:nth-child(3) { display: none; }
 .service-catalog-management .editor-actions .button-dark { display: none; }
 .rate-card-management .service-editor { border-color: #d7c6a0; }

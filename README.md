@@ -52,19 +52,21 @@ Operator workspace → Services → edit listing → Save draft
 Operator workspace → Rate Cards → edit rate → Preview estimate → Publish
 ```
 
-The operator request flow is progressive rather than status-only:
+The MVP operator request flow ends at acceptance readiness and is progressive
+rather than status-only:
 
 ```text
 New → Qualifying → Assessment Needed → Assessment Complete → Quote Draft
-→ Quote Sent → Follow-up Due → Accepted → Scheduling → Scheduled
-→ In Progress → Needs Approval → Quality Check → Completed
+→ Quote Sent → Accepted
 ```
 
 Each active request carries a next action and optional due date. The operator
 can record whether the request is being priced from the initial information,
 customer photos/video, an on-site walkthrough, or a formal commercial survey.
-Access notes, customer expectations, last-cleaned context, and quote-preparation
-notes stay with the request instead of living in a separate message thread.
+Before acceptance, the operator records evidence, scope, inclusions, exclusions,
+assumptions, pricing version, and customer acceptance evidence. Scheduling,
+delivery, quality, completion, repeat-service, and full history features remain
+documented in the Specs backlog but are shelved for this MVP.
 
 For a workbook migration or seed refresh, run the importer from `server/`:
 
@@ -123,15 +125,15 @@ cd server && npm start
 | POST   | `/api/requests/:reference/assessments` | operator | Save an assessment record |
 | POST   | `/api/requests/:reference/quotes` | operator | Create an immutable quote version |
 | PATCH  | `/api/quotes/:id` | operator | Send, revise, accept, decline, or expire a quote |
-| POST   | `/api/requests/:reference/conversations` | operator | Record a conversation or internal note |
-| POST   | `/api/requests/:reference/follow-ups` | operator | Create a dated follow-up task |
-| PATCH  | `/api/follow-ups/:id` | operator | Complete or cancel a follow-up task |
-| POST   | `/api/requests/:reference/schedule` | operator | Create or update a schedule and job |
-| POST   | `/api/requests/:reference/handoff` | operator | Freeze the accepted scope for field work |
-| POST   | `/api/requests/:reference/variances` | operator | Record a scope variance for approval |
-| PATCH  | `/api/variances/:id` | operator | Record a variance decision |
-| POST   | `/api/requests/:reference/quality` | operator | Save a quality review |
-| POST   | `/api/requests/:reference/complete` | operator | Complete a job and record repeat-service signals |
+| POST   | `/api/requests/:reference/conversations` | operator | Shelved for MVP; returns `410` |
+| POST   | `/api/requests/:reference/follow-ups` | operator | Shelved for MVP; returns `410` |
+| PATCH  | `/api/follow-ups/:id` | operator | Shelved for MVP; returns `410` |
+| POST   | `/api/requests/:reference/schedule` | operator | Shelved for MVP; returns `410` |
+| POST   | `/api/requests/:reference/handoff` | operator | Shelved for MVP; returns `410` |
+| POST   | `/api/requests/:reference/variances` | operator | Shelved for MVP; returns `410` |
+| PATCH  | `/api/variances/:id` | operator | Shelved for MVP; returns `410` |
+| POST   | `/api/requests/:reference/quality` | operator | Shelved for MVP; returns `410` |
+| POST   | `/api/requests/:reference/complete` | operator | Shelved for MVP; returns `410` |
 
 Public write endpoints are rate limited (10 submissions/hour/IP, 10 sign-in
 attempts/15 min/IP).

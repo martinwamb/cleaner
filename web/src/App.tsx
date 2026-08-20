@@ -890,12 +890,17 @@ function Status({ status }: { status: RequestStatus }) {
 }
 
 function OperationalWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
+  const conversationTemplates = {
+    'Request photos': 'Could you send a few photos of the main areas, surfaces, and any access constraints? That will help us confirm the scope.',
+    'Send quote': 'We have prepared a quote based on the agreed scope and assumptions. Please let us know if you have any questions or changes.',
+    'Confirm access': 'Before the scheduled arrival, please confirm the access instructions and any parking, lockbox, alarm, or contact details.',
+  }
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [assessment, setAssessment] = useState({ type: lead.assessmentType, status: lead.assessmentStatus, confidence: lead.assessmentConfidence, findings: '', measurements: '' })
   const [quote, setQuote] = useState({ scope: lead.scope, inclusions: '', exclusions: '', assumptions: '', amount: '', notes: '' })
-  const [conversation, setConversation] = useState({ channel: 'phone', direction: 'inbound', body: '' })
+  const [conversation, setConversation] = useState({ channel: 'phone', direction: 'inbound', body: '', template: '' })
   const [followUp, setFollowUp] = useState({ action: '', dueAt: '', note: '' })
   const [schedule, setSchedule] = useState({ requestedWindow: lead.timing, confirmedWindow: '', status: 'Requested', assignedTo: '', accessConfirmed: false, notes: '' })
   const [handoff, setHandoff] = useState({ acceptedScope: lead.scope, exclusions: '', assignedTeam: '', checklist: '' })
@@ -947,6 +952,7 @@ function OperationalWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: 
     <div className="workflow-block">
       <div className="workflow-block-heading"><span>CONVERSATION AND FOLLOW-UP</span><small>{workflow.followUps.filter((item) => item.status === 'Open').length} open follow-ups</small></div>
       <div className="two-col compact-fields"><label>Channel<select value={conversation.channel} onChange={(event) => field(setConversation, 'channel', event.target.value)}><option>phone</option><option>email</option><option>sms</option><option>internal</option></select></label><label>Direction<select value={conversation.direction} onChange={(event) => field(setConversation, 'direction', event.target.value)}><option>inbound</option><option>outbound</option><option>internal</option></select></label></div>
+      <label>Use a message template<select value={conversation.template} onChange={(event) => setConversation((current) => ({ ...current, template: event.target.value, body: conversationTemplates[event.target.value as keyof typeof conversationTemplates] || current.body }))}><option value="">Start from scratch</option>{Object.keys(conversationTemplates).map((name) => <option key={name}>{name}</option>)}</select></label>
       <label>Conversation note<textarea rows={2} value={conversation.body} onChange={(event) => field(setConversation, 'body', event.target.value)} placeholder="Record what the customer said or what was sent." /></label>
       <button className="button button-quiet workflow-save" disabled={busy || !conversation.body.trim()} onClick={() => run(() => addConversation(lead.id, conversation).then(() => undefined), 'Conversation recorded.')}>Record conversation</button>
       <div className="two-col compact-fields"><label>Next action<input value={followUp.action} onChange={(event) => field(setFollowUp, 'action', event.target.value)} placeholder="Send revised quote" /></label><label>Due date<input type="datetime-local" value={followUp.dueAt} onChange={(event) => field(setFollowUp, 'dueAt', event.target.value)} /></label></div>

@@ -170,10 +170,11 @@ router.post('/requests/:reference/schedule', requireOperator, (req, res) => {
   const row = requestFor(req.params.reference);
   if (!row) return res.status(404).json({ error: 'Request not found' });
   const input = req.body || {};
+  const acceptedQuote = db.prepare("SELECT id FROM quotes WHERE request_id = ? AND status = 'Accepted'").get(row.id);
+  if (!acceptedQuote) return res.status(409).json({ error: 'Accept a quote before scheduling the work.' });
   let job = db.prepare('SELECT * FROM jobs WHERE request_id = ?').get(row.id);
   if (!job) {
-    const quote = db.prepare('SELECT id FROM quotes WHERE request_id = ?').get(row.id);
-    const result = db.prepare('INSERT INTO jobs (request_id, quote_id, assigned_to) VALUES (?, ?, ?)').run(row.id, quote?.id || null, text(input.assignedTo, 160));
+    const result = db.prepare('INSERT INTO jobs (request_id, quote_id, assigned_to) VALUES (?, ?, ?)').run(row.id, acceptedQuote.id, text(input.assignedTo, 160));
     job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(result.lastInsertRowid);
   }
   const appointment = db.prepare('SELECT * FROM appointments WHERE job_id = ? ORDER BY id DESC LIMIT 1').get(job.id);

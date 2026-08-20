@@ -73,6 +73,7 @@ const selectAllRateCards = db.prepare(`
   ORDER BY services.name COLLATE NOCASE, rate_cards.location_name COLLATE NOCASE
 `);
 const selectRateCardsByService = db.prepare("SELECT * FROM rate_cards WHERE service_id = ? AND status = 'Published' ORDER BY location_name COLLATE NOCASE");
+const selectAllRateCardsByService = db.prepare("SELECT * FROM rate_cards WHERE service_id = ? ORDER BY status = 'Published' DESC, location_name COLLATE NOCASE");
 
 function getService(id) {
   const row = selectById.get(id);
@@ -80,18 +81,43 @@ function getService(id) {
 }
 
 function getOperatorServices() {
-  return selectAll.all().map((row) => rowToService(row, true));
+  return selectAll.all().map((row) => ({ ...rowToService(row, true), rateCards: selectAllRateCardsByService.all(row.id).map((card) => rowToRateCard({ ...card, service_name: row.name, service_category: row.category })) }));
 }
 
 function getPublishedServices() {
-  return selectPublished.all().map((row) => rowToService(row));
+  return selectPublished.all().map((row) => ({
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    status: row.status,
+    description: row.description,
+    buyers: row.buyers,
+    color: row.color,
+    icon: row.card_icon,
+    featuredOrder: row.featured_order,
+    propertyTypes: parseJson(row.property_types, []),
+    customerTypes: parseJson(row.customer_types, []),
+    frequencyOptions: parseJson(row.frequency_options, []),
+    useCases: row.use_cases,
+    includedScope: row.included_scope,
+    exclusions: row.exclusions,
+    tags: row.tags,
+    timingPattern: row.timing_pattern,
+    preferredLeadTime: row.preferred_lead_time,
+    estimatedDuration: row.estimated_duration,
+    repeatPotential: row.repeat_potential,
+    customerNote: row.customer_note,
+    featured: Boolean(row.featured),
+    addOnRules: parseJson(row.add_on_rules, []).map((addOn) => ({ name: addOn.name })),
+    quoteEnabled: Boolean(selectRateCardsByService.all(row.id).length),
+  }));
 }
 
 function getPublicCatalog() {
   const services = getPublishedServices();
   const addOns = new Map();
   for (const service of services) {
-    for (const addOn of service.addOnRules) addOns.set(addOn.name, addOn);
+    for (const addOn of service.addOnRules || []) addOns.set(addOn.name, addOn);
   }
   return {
     services,
@@ -148,10 +174,13 @@ function getPricingForLocation(serviceName, location) {
   const cards = selectRateCardsByService.all(service.id);
   const rateCard = cards.find((card) => parseJson(card.postal_codes, []).includes(postalCode))
     || cards.find((card) => parseJson(card.postal_codes, []).length === 0);
-  const source = rateCard ? rowToRateCard({ ...rateCard, service_name: service.name, service_category: service.category }) : service;
+  if (!rateCard) return null;
+  const source = rowToRateCard({ ...rateCard, service_name: service.name, service_category: service.category });
   return {
     service,
     rateCard: rateCard || null,
+    rateCardId: source.id,
+    rateCardVersion: source.version,
     base: source.basePrice,
     sizeRate: source.unitRate,
     minimum: source.minimumPrice,

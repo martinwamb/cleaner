@@ -38,8 +38,9 @@ function parseQuoteRequest(body) {
   if (!email) errors.push('Email is required.');
   else if (!EMAIL_PATTERN.test(email)) errors.push('Email is not a valid address.');
 
-  const service = text(input.service, 80);
-  if (!serviceNames().includes(service)) errors.push('Select one of the listed services.');
+  const selectedService = catalog.services.find((item) => item.id === input.serviceId || item.name === input.service);
+  const service = selectedService?.name || text(input.service, 80);
+  if (!selectedService || !serviceNames().includes(service)) errors.push('Select one of the listed services.');
 
   const property = text(input.property, 80);
    if (property && !catalog.propertyTypes.includes(property)) errors.push('Select a listed property type.');
@@ -71,6 +72,7 @@ function parseQuoteRequest(body) {
       email,
       phone: text(input.phone, LIMITS.phone),
       service,
+      serviceId: selectedService?.id || '',
       property,
       size,
       condition,
@@ -94,6 +96,7 @@ function parseEstimateInput(body) {
   const rawAddOns = Array.isArray(input.addOns) ? input.addOns : input.addOns ? [input.addOns] : [];
   return {
     service: text(input.service, 80),
+    serviceId: text(input.serviceId, 80),
     property: text(input.property, 80),
     size: input.size,
     condition: input.condition,

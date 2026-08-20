@@ -3,6 +3,7 @@
 const express = require('express');
 const { requireOperator } = require('../auth');
 const { db, getOperatorServices, getService } = require('../catalog');
+const { calculateEstimate } = require('../pricing');
 
 const router = express.Router();
 router.use(requireOperator);
@@ -13,11 +14,6 @@ const fields = {
   propertyTypes: 'property_types', customerTypes: 'customer_types', frequencyOptions: 'frequency_options', useCases: 'use_cases',
   includedScope: 'included_scope', exclusions: 'exclusions', tags: 'tags', timingPattern: 'timing_pattern', preferredLeadTime: 'preferred_lead_time',
   estimatedDuration: 'estimated_duration', repeatPotential: 'repeat_potential', customerNote: 'customer_note', featured: 'featured',
-  pricingReadiness: 'pricing_readiness', pricingBasis: 'pricing_basis', pricingModel: 'pricing_model', sizeInputLabel: 'size_input_label',
-  basePrice: 'base_price', estimateSpread: 'estimate_spread', unitRate: 'unit_rate', minimumPrice: 'minimum_price',
-  standardMultiplier: 'standard_multiplier', heavyMultiplier: 'heavy_multiplier', extremeMultiplier: 'extreme_multiplier',
-  oneTimeMultiplier: 'one_time_multiplier', recurringMultiplier: 'recurring_multiplier', rushMultiplier: 'rush_multiplier',
-  travelFeeType: 'travel_fee_type', travelFeeAmount: 'travel_fee_amount', serviceAreaRule: 'service_area_rule', addOnRules: 'add_on_rules',
   version: 'version', effectiveDate: 'effective_date', changeReason: 'change_reason',
 };
 const selectRaw = db.prepare('SELECT * FROM services WHERE id = ?');
@@ -37,14 +33,6 @@ function recordEvent(service, operatorId, action) {
     INSERT INTO service_change_events (service_id, operator_id, action, version, change_reason, snapshot)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(service.id, operatorId, action, service.version, service.changeReason || '', snapshot(service));
-}
-
-function hasPricing(service) {
-  return service.pricingReadiness === 'Ready'
-    && [service.basePrice, service.unitRate, service.minimumPrice, service.estimateSpread,
-      service.standardMultiplier, service.heavyMultiplier, service.extremeMultiplier,
-      service.oneTimeMultiplier, service.recurringMultiplier].every(Number.isFinite)
-    && service.addOnRules.every((addOn) => Number.isFinite(Number(addOn.price)));
 }
 
 function applyServiceFields(service, id) {
@@ -70,34 +58,45 @@ router.get('/ops/services/:id', (req, res) => {
   res.json({ service });
 });
 
-router.post('/ops/services', (req, res) => {
+router.post('/ops/service-offerings', (req, res) => {
   const input = req.body && typeof req.body === 'object' ? req.body : {};
-  const id = String(input.id || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
-  const name = String(input.name || '').trim();
+  const serviceInput = input.service && typeof input.service === 'object' ? input.service : input;
+  const id = String(serviceInput.id || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const name = String(serviceInput.name || '').trim();
+  const cards = Array.isArray(input.rateCards) ? input.rateCards : [];
+  const required = [
+    ['description', serviceInput.description], ['category', serviceInput.category], ['includedScope', serviceInput.includedScope],
+    ['exclusions', serviceInput.exclusions], ['customerNote', serviceInput.customerNote], ['timingPattern', serviceInput.timingPattern],
+  ].filter(([, value]) => !String(value || '').trim()).map(([field]) => field);
   if (!id || !name) return res.status(400).json({ error: 'Service ID and name are required.' });
   if (getService(id)) return res.status(409).json({ error: 'A service with that ID already exists.' });
+  if (required.length) return res.status(400).json({ error: 'Complete the customer-facing service details before saving.', fields: required });
+  if (!cards.length) return res.status(400).json({ error: 'Add at least one rate card before saving this service.' });
 
-  db.prepare(`INSERT INTO services (id, name, description, status, pricing_readiness, change_reason) VALUES (?, ?, ?, 'Draft', 'Needs operator pricing review', ?)`)
-    .run(id, name, String(input.description || ''), 'Created as a draft.');
-  const service = getService(id);
-  recordEvent(service, req.operator.sub, 'created');
-  res.status(201).json({ service });
+  const createOffering = db.transaction(() => {
+    db.prepare(`INSERT INTO services (id, name, category, description, buyers, color, card_icon, property_types, customer_types, frequency_options, use_cases, included_scope, exclusions, tags, timing_pattern, preferred_lead_time, estimated_duration, repeat_potential, customer_note, featured, status, pricing_readiness, change_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Published', 'Ready', ?)`)
+      .run(id, name, String(serviceInput.category || ''), String(serviceInput.description || ''), String(serviceInput.buyers || ''), String(serviceInput.color || 'clay'), String(serviceInput.icon || '▦'), JSON.stringify(serviceInput.propertyTypes || []), JSON.stringify(serviceInput.customerTypes || []), JSON.stringify(serviceInput.frequencyOptions || ['One-time', 'Recurring']), String(serviceInput.useCases || ''), String(serviceInput.includedScope || ''), String(serviceInput.exclusions || ''), String(serviceInput.tags || ''), String(serviceInput.timingPattern || ''), String(serviceInput.preferredLeadTime || ''), String(serviceInput.estimatedDuration || ''), String(serviceInput.repeatPotential || ''), String(serviceInput.customerNote || ''), serviceInput.featured ? 1 : 0, 'Created with connected rate cards.');
+    const insertCard = db.prepare(`INSERT INTO rate_cards (service_id, name, status, location_name, postal_codes, pricing_model, size_input_label, base_price, unit_rate, minimum_price, estimate_spread, standard_multiplier, heavy_multiplier, extreme_multiplier, one_time_multiplier, recurring_multiplier, travel_fee_amount, add_on_rules, change_reason) VALUES (?, ?, 'Published', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const card of cards) {
+      const pricingModel = String(card.pricingModel || 'Custom quote');
+      if (pricingModel !== 'Custom quote' && !Number.isFinite(Number(card.basePrice))) throw new Error('Each non-custom rate card needs a base price.');
+      insertCard.run(id, String(card.name || `${name} rate`), String(card.locationName || 'Default service area'), JSON.stringify(Array.isArray(card.postalCodes) ? card.postalCodes : []), pricingModel, String(card.sizeInputLabel || serviceInput.sizeUnit || 'Units or project scope'), card.basePrice == null ? null : Number(card.basePrice), card.unitRate == null ? null : Number(card.unitRate), card.minimumPrice == null ? null : Number(card.minimumPrice), card.estimateSpread == null ? 0 : Number(card.estimateSpread), card.standardMultiplier == null ? 1 : Number(card.standardMultiplier), card.heavyMultiplier == null ? 1 : Number(card.heavyMultiplier), card.extremeMultiplier == null ? 1 : Number(card.extremeMultiplier), card.oneTimeMultiplier == null ? 1 : Number(card.oneTimeMultiplier), card.recurringMultiplier == null ? 1 : Number(card.recurringMultiplier), card.travelFeeAmount == null ? 0 : Number(card.travelFeeAmount), JSON.stringify(Array.isArray(card.addOnRules) ? card.addOnRules : []), 'Created with service offering.');
+    }
+    return getService(id);
+  });
+
+  try {
+    const service = createOffering();
+    recordEvent(service, req.operator.sub, 'created-and-published');
+    res.status(201).json({ service });
+  } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
 router.patch('/ops/services/:id', (req, res) => {
   const current = getService(req.params.id);
   if (!current) return res.status(404).json({ error: 'Service not found.' });
   const input = req.body && typeof req.body === 'object' ? req.body : {};
-  const raw = selectRaw.get(req.params.id);
   const nextVersion = `v${Number(String(current.version || 'v1.0').replace(/^v/, '').split('.')[0]) + 1}.0`;
-
-  if (raw.status === 'Published') {
-    const candidate = { ...current, ...input, version: nextVersion, status: 'Draft' };
-    db.prepare("UPDATE services SET draft_snapshot = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(JSON.stringify(candidate), current.id);
-    recordEvent(candidate, req.operator.sub, 'saved-draft');
-    return res.json({ service: candidate });
-  }
 
   const updates = [];
   const values = [];
@@ -111,7 +110,7 @@ router.patch('/ops/services/:id', (req, res) => {
   values.push(nextVersion, current.id);
   db.prepare(`UPDATE services SET ${updates.join(', ')} WHERE id = ?`).run(...values);
   const updated = getService(current.id);
-  recordEvent(updated, req.operator.sub, 'saved-draft');
+  recordEvent(updated, req.operator.sub, 'updated');
   res.json({ service: updated });
 });
 
@@ -145,35 +144,9 @@ router.post('/ops/services/:id/preview', (req, res) => {
   const service = getService(req.params.id);
   if (!service) return res.status(404).json({ error: 'Service not found.' });
   const input = req.body && typeof req.body === 'object' ? req.body : {};
-  const size = Number(input.size);
-  if (!Number.isFinite(size) || size <= 0) return res.status(400).json({ error: 'Enter a sample size greater than zero.' });
-  const condition = ['Standard', 'Heavy', 'Extreme'].includes(input.condition) ? input.condition : 'Standard';
-  const recurring = input.frequency === 'Recurring' ? Number(service.recurringMultiplier) || 1 : 1;
-  const addOns = Array.isArray(input.addOns) ? input.addOns : [];
-  const addOnTotal = addOns.reduce((total, name) => {
-    const match = service.addOnRules.find((item) => item.name === name);
-    return total + (match ? Number(match.price) || 0 : 0);
-  }, 0);
-  const local = String(input.location || '').match(/\b554\d{2}\b/);
-  const travel = local ? 0 : Number(service.travelFeeAmount) || 0;
-  const total = Math.max(
-    Number(service.minimumPrice) || 0,
-    ((Number(service.basePrice) || 0) + size * (Number(service.unitRate) || 0))
-      * (Number(service[`${condition.toLowerCase()}Multiplier`]) || 1) * recurring + addOnTotal + travel,
-  );
-  const spread = Number(service.estimateSpread) || 0;
-  res.json({ estimate: {
-    low: Math.round(total * (1 - spread)),
-    high: Math.round(total * (1 + spread)),
-    breakdown: [
-      `${service.basePrice || 0} base service`,
-      `${size * (Number(service.unitRate) || 0)} size allowance`,
-      `${condition} condition`,
-      addOnTotal ? `${addOnTotal} selected add-ons` : 'No add-ons',
-      travel ? `${travel} travel allowance` : 'Local service area',
-      input.frequency === 'Recurring' ? 'Recurring-service adjustment' : 'One-time service',
-    ],
-  } });
+  const estimate = calculateEstimate({ ...input, serviceId: service.id, service: service.name });
+  if (!estimate) return res.status(409).json({ error: 'No published rate card can price this service and sample location.' });
+  res.json({ estimate });
 });
 
 router.post('/ops/services/:id/pause', (req, res) => {

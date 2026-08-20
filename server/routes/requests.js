@@ -21,7 +21,9 @@ const ALLOWED_TRANSITIONS = {
   'Quote Draft': ['Quote Sent', 'Assessment Needed', 'Cancelled'],
   'Quote Sent': ['Follow-up Due', 'Accepted', 'Declined', 'Expired', 'Cancelled'],
   'Follow-up Due': ['Quote Sent', 'Accepted', 'Declined', 'Expired', 'Cancelled'],
-  Accepted: ['Scheduling', 'Cancelled'],
+  // Post-acceptance fulfillment is shelved for the MVP. Keep legacy status
+  // values readable, but do not allow the request API to enter that workflow.
+  Accepted: ['Cancelled'],
   Scheduling: ['Scheduled', 'Accepted', 'Cancelled'],
   Scheduled: ['In Progress', 'Scheduling', 'Cancelled'],
   'In Progress': ['Needs Approval', 'Quality Check', 'Cancelled'],
@@ -32,7 +34,7 @@ const ALLOWED_TRANSITIONS = {
 const nextActionFor = (status) => ({
   New: 'Review request', Qualifying: 'Choose assessment path', 'Waiting for Customer': 'Review customer response',
   'Assessment Needed': 'Complete assessment', 'Assessment Complete': 'Prepare quote', 'Quote Draft': 'Send quote',
-  'Quote Sent': 'Follow up with customer', 'Follow-up Due': 'Record customer decision', Accepted: 'Schedule work',
+  'Quote Sent': 'Follow up with customer', 'Follow-up Due': 'Record customer decision', Accepted: 'Acceptance recorded',
   Scheduling: 'Confirm schedule', Scheduled: 'Prepare field handoff', 'In Progress': 'Complete quality check',
   'Needs Approval': 'Resolve scope change', 'Quality Check': 'Complete job', Completed: 'Review repeat potential',
 }[status] || 'Review request');
@@ -46,7 +48,6 @@ const NEXT_STATUS = {
   'Quote Sent': 'Follow-up Due',
   'Follow-up Due': 'Accepted',
   Confirmed: 'Completed',
-  Accepted: 'Scheduling',
   Scheduling: 'Scheduled',
   Scheduled: 'In Progress',
   'In Progress': 'Quality Check',
@@ -86,6 +87,9 @@ const toOperatorRow = (row) => ({
   email: row.email,
   phone: row.phone,
   service: row.service,
+  serviceId: row.service_id || '',
+  rateCardId: row.rate_card_id || null,
+  rateCardVersion: row.rate_card_version || '',
   property: row.property,
   size: row.size,
   condition: row.condition,
@@ -119,12 +123,12 @@ const toOperatorRow = (row) => ({
 
 const insertRequest = db.prepare(`
   INSERT INTO requests (
-    reference, customer, organization, email, phone, service, property, size,
+    reference, customer, organization, email, phone, service, service_id, rate_card_id, rate_card_version, property, size,
     condition, frequency, add_ons, location, scope, timing, priority,
     estimate_low, estimate_high, estimate_json, assessment_type, access_notes,
     last_cleaned, customer_expectations
   ) VALUES (
-    @reference, @customer, @organization, @email, @phone, @service, @property, @size,
+    @reference, @customer, @organization, @email, @phone, @service, @serviceId, @rateCardId, @rateCardVersion, @property, @size,
     @condition, @frequency, @addOns, @location, @scope, @timing, @priority,
     @estimateLow, @estimateHigh, @estimateJson, @assessmentType, @accessNotes,
     @lastCleaned, @customerExpectations
@@ -154,6 +158,9 @@ const createRequest = db.transaction((value, estimate) => {
     email: value.email,
     phone: value.phone,
     service: value.service,
+    serviceId: value.serviceId,
+    rateCardId: estimate?.rateCardId || null,
+    rateCardVersion: estimate?.rateCardVersion || '',
     property: value.property,
     size: value.size,
     condition: value.condition,

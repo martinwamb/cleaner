@@ -373,7 +373,12 @@ try { db.exec("ALTER TABLE request_events ADD COLUMN channel TEXT NOT NULL DEFAU
 try { db.exec("ALTER TABLE request_events ADD COLUMN note TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
 try { db.exec('ALTER TABLE requests ADD COLUMN customer_id INTEGER'); } catch { /* already migrated */ }
 try { db.exec('ALTER TABLE requests ADD COLUMN property_id INTEGER'); } catch { /* already migrated */ }
+try { db.exec('ALTER TABLE requests ADD COLUMN service_id TEXT REFERENCES services(id)'); } catch { /* already migrated */ }
+try { db.exec('ALTER TABLE requests ADD COLUMN rate_card_id INTEGER REFERENCES rate_cards(id)'); } catch { /* already migrated */ }
+try { db.exec("ALTER TABLE requests ADD COLUMN rate_card_version TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
 try { db.exec("ALTER TABLE quotes ADD COLUMN acceptance_channel TEXT NOT NULL DEFAULT ''"); } catch { /* already migrated */ }
+try { db.exec('ALTER TABLE quote_versions ADD COLUMN service_id TEXT REFERENCES services(id)'); } catch { /* already migrated */ }
+try { db.exec('ALTER TABLE quote_versions ADD COLUMN rate_card_id INTEGER REFERENCES rate_cards(id)'); } catch { /* already migrated */ }
 
 const seedCatalog = db.transaction(() => {
   if (db.prepare('SELECT COUNT(*) AS count FROM services').get().count > 0) return;
@@ -502,5 +507,12 @@ const seedRateCards = db.transaction(() => {
 });
 
 seedRateCards();
+
+db.transaction(() => {
+  db.prepare("UPDATE requests SET service_id = (SELECT id FROM services WHERE services.name = requests.service) WHERE service_id IS NULL OR service_id = ''").run();
+  db.prepare("UPDATE requests SET rate_card_id = (SELECT id FROM rate_cards WHERE rate_cards.service_id = requests.service_id AND rate_cards.status = 'Published' ORDER BY rate_cards.location_name LIMIT 1), rate_card_version = COALESCE((SELECT version FROM rate_cards WHERE rate_cards.service_id = requests.service_id AND rate_cards.status = 'Published' ORDER BY rate_cards.location_name LIMIT 1), '') WHERE service_id IS NOT NULL AND (rate_card_id IS NULL OR rate_card_version = '')").run();
+  db.prepare("UPDATE quote_versions SET service_id = (SELECT service_id FROM requests JOIN quotes ON quotes.request_id = requests.id WHERE quotes.id = quote_versions.quote_id) WHERE service_id IS NULL").run();
+  db.prepare("UPDATE quote_versions SET rate_card_id = (SELECT rate_card_id FROM requests JOIN quotes ON quotes.request_id = requests.id WHERE quotes.id = quote_versions.quote_id) WHERE rate_card_id IS NULL").run();
+})();
 
 module.exports = db;

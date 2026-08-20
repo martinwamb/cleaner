@@ -135,6 +135,8 @@ export type ManagedService = {
   effectiveDate: string | null
   changeReason: string
   updatedAt: string
+  rateCards?: RateCard[]
+  quoteEnabled?: boolean
 }
 
 export type RateCard = {
@@ -166,6 +168,7 @@ export type RateCard = {
 }
 
 export type QuoteInput = {
+  serviceId: string
   service: string
   property: string
   size: string
@@ -258,11 +261,8 @@ export const getSession = () =>
 export const getOperatorServices = () =>
   request<{ services: ManagedService[] }>('/ops/services').then((result) => result.services)
 
-export const createOperatorService = (input: { id: string; name: string; description?: string }) =>
-  request<{ service: ManagedService }>('/ops/services', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  }).then((result) => result.service)
+export const createServiceOffering = (input: { service: Partial<ManagedService>; rateCards: Partial<RateCard>[] }) =>
+  request<{ service: ManagedService }>('/ops/service-offerings', { method: 'POST', body: JSON.stringify(input) }).then((result) => result.service)
 
 export const saveOperatorService = (id: string, service: Partial<ManagedService>) =>
   request<{ service: ManagedService }>(`/ops/services/${encodeURIComponent(id)}`, {
@@ -291,7 +291,7 @@ export const previewOperatorService = (id: string, service: Partial<ManagedServi
 export const getOperatorRateCards = () =>
   request<{ rateCards: RateCard[] }>('/ops/rate-cards').then((result) => result.rateCards)
 
-export const createRateCard = (input: { serviceId: string; name?: string }) =>
+export const createRateCard = (input: { serviceId: string; name?: string; locationName?: string; postalCodes?: string[]; pricingModel?: string; sizeInputLabel?: string; basePrice?: number | null; unitRate?: number | null; minimumPrice?: number | null; estimateSpread?: number; standardMultiplier?: number; heavyMultiplier?: number; extremeMultiplier?: number; recurringMultiplier?: number; addOnRules?: AddOnRule[] }) =>
   request<{ rateCard: RateCard }>('/ops/rate-cards', { method: 'POST', body: JSON.stringify(input) }).then((result) => result.rateCard)
 
 export const duplicateRateCard = (id: number, name?: string) =>

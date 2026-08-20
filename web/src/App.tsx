@@ -9,7 +9,7 @@ import {
   createQuoteVersion,
   decideVariance,
   ApiError,
-  createOperatorService,
+  createServiceOffering,
   createRateCard,
   duplicateRateCard,
   getCatalog,
@@ -48,6 +48,55 @@ import {
   type Workflow,
   type Service,
 } from './api'
+
+type RateCardForm = {
+  name: string
+  locationName: string
+  postalCodes: string
+  pricingModel: string
+  sizeInputLabel: string
+  basePrice: string
+  unitRate: string
+  minimumPrice: string
+  estimateSpread: string
+  standardMultiplier: string
+  heavyMultiplier: string
+  extremeMultiplier: string
+  recurringMultiplier: string
+}
+
+const emptyRateCardForm = (name = ''): RateCardForm => ({
+  name,
+  locationName: 'Default service area',
+  postalCodes: '',
+  pricingModel: 'Custom quote',
+  sizeInputLabel: 'Units or project scope',
+  basePrice: '',
+  unitRate: '',
+  minimumPrice: '',
+  estimateSpread: '0',
+  standardMultiplier: '1',
+  heavyMultiplier: '1',
+  extremeMultiplier: '1',
+  recurringMultiplier: '1',
+})
+
+const rateCardFormPayload = (form: RateCardForm) => ({
+  name: form.name.trim(),
+  locationName: form.locationName.trim() || 'Default service area',
+  postalCodes: form.postalCodes.split(',').map((item) => item.trim()).filter(Boolean),
+  pricingModel: form.pricingModel,
+  sizeInputLabel: form.sizeInputLabel.trim() || 'Units or project scope',
+  basePrice: form.basePrice === '' ? null : Number(form.basePrice),
+  unitRate: form.unitRate === '' ? null : Number(form.unitRate),
+  minimumPrice: form.minimumPrice === '' ? null : Number(form.minimumPrice),
+  estimateSpread: form.estimateSpread === '' ? 0 : Number(form.estimateSpread),
+  standardMultiplier: form.standardMultiplier === '' ? 1 : Number(form.standardMultiplier),
+  heavyMultiplier: form.heavyMultiplier === '' ? 1 : Number(form.heavyMultiplier),
+  extremeMultiplier: form.extremeMultiplier === '' ? 1 : Number(form.extremeMultiplier),
+  recurringMultiplier: form.recurringMultiplier === '' ? 1 : Number(form.recurringMultiplier),
+  addOnRules: [],
+})
 
 type View = 'home' | 'services' | 'request' | 'operations'
 
@@ -98,6 +147,8 @@ function App() {
   const [catalogError, setCatalogError] = useState('')
   const [notice, setNotice] = useState('')
   const [requestedService, setRequestedService] = useState('')
+  const [operator, setOperator] = useState<Operator | null>(null)
+  const [profileOpen, setProfileOpen] = useState(false)
   const scrollPositions = useRef<Partial<Record<View, number>>>({})
 
   useEffect(() => {
@@ -113,9 +164,25 @@ function App() {
     return () => window.cancelAnimationFrame(frame)
   }, [view])
 
+  useEffect(() => {
+    const closeProfile = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setProfileOpen(false)
+    }
+    window.addEventListener('keydown', closeProfile)
+    return () => window.removeEventListener('keydown', closeProfile)
+  }, [])
+
   const navigate = (nextView: View) => {
     scrollPositions.current[view] = window.scrollY
+    setProfileOpen(false)
     setView(nextView)
+  }
+
+  const signOutOperator = async () => {
+    await logout().catch(() => undefined)
+    setOperator(null)
+    setProfileOpen(false)
+    setNotice('Signed out of the operator workspace.')
   }
 
   const openRequest = (service?: string) => {
@@ -126,18 +193,32 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <button className="brand" onClick={() => navigate('home')} aria-label="Return to home">
-          <span className="brand-mark">fh</span>
-          <span><strong>fieldhouse</strong><small>cleaning platform</small></span>
-        </button>
-        <nav className="public-nav" aria-label="Public navigation">
-          <button className={view === 'home' ? 'active' : ''} onClick={() => navigate('home')}>Home</button>
-          <button className={view === 'services' ? 'active' : ''} onClick={() => navigate('services')}>Services</button>
-        </nav>
-        <div className="topbar-actions">
-          <button className="text-button" onClick={() => navigate('operations')}>Operator workspace</button>
-          <button className="button button-dark compact" onClick={() => openRequest()}>Request a quote <span>↗</span></button>
+      <header className={`topbar ${view === 'operations' ? 'workspace-topbar' : ''}`}>
+        <div className="topbar-inner page-width">
+          <button className="brand" onClick={() => navigate('home')} aria-label="Return to home">
+            <span className="brand-mark">fh</span>
+            <span><strong>fieldhouse</strong><small>cleaning platform</small></span>
+          </button>
+          {view === 'operations' ? <div className="profile-menu">
+            <button className="profile-trigger" aria-label="Open operator profile" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>
+              <span className="profile-avatar" aria-hidden="true">{operator ? operator.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() : 'OP'}</span>
+              <span className="profile-chevron" aria-hidden="true">⌄</span>
+            </button>
+            {profileOpen && <div className="profile-dropdown" role="menu">
+              <strong>{operator?.name || 'Operator'}</strong>
+              <small>{operator?.email || 'Loading profile...'}</small>
+              <button role="menuitem" onClick={signOutOperator}>Sign out</button>
+            </div>}
+          </div> : <>
+            <nav className="public-nav" aria-label="Public navigation">
+              <button className={view === 'home' ? 'active' : ''} onClick={() => navigate('home')}>Home</button>
+              <button className={view === 'services' ? 'active' : ''} onClick={() => navigate('services')}>Services</button>
+            </nav>
+            <div className="topbar-actions">
+              <button className="text-button" onClick={() => navigate('operations')}>Operator workspace</button>
+              <button className="button button-dark compact" onClick={() => openRequest()}>Request a quote <span>↗</span></button>
+            </div>
+          </>}
         </div>
       </header>
 
@@ -157,7 +238,7 @@ function App() {
       {view === 'home' && <Home services={catalog?.services ?? []} onRequest={openRequest} onServices={() => navigate('services')} />}
       {view === 'services' && <Services services={catalog?.services ?? []} onRequest={openRequest} />}
       {view === 'request' && <QuoteRequest catalog={catalog} onBack={() => navigate('home')} initialService={requestedService} />}
-      {view === 'operations' && <Operations onNotice={setNotice} />}
+      {view === 'operations' && <Operations operator={operator} setOperator={setOperator} onNotice={setNotice} />}
 
       <footer className="footer">
         <span>Local cleaning, clearly scoped.</span>
@@ -218,13 +299,14 @@ function ServiceCard({ service, index, onRequest, large = false }: { service: Se
     <div className="service-number">{String(index + 1).padStart(2, '0')}</div>
     <div className="service-card-main">
       <div><h3>{service.name}</h3><p>{service.description}</p></div>
-      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.name)}>Request for Service <span>↗</span></button></div>
+      <div className="service-bottom"><span>Best for: <strong>{service.buyers}</strong></span><button onClick={() => onRequest(service.id)}>Request for Service <span>↗</span></button></div>
     </div>
     <div className="service-icon">{service.icon}</div>
   </article>
 }
 
 const emptyQuote: QuoteInput = {
+  serviceId: '',
   service: '',
   property: '',
   size: '',
@@ -243,11 +325,12 @@ function QuoteRequest({ catalog, onBack, initialService }: { catalog: Catalog | 
   const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
-    if (!initialService || !catalog?.services.some((service) => service.name === initialService)) return
-    setInput((current) => current.service ? current : { ...current, service: initialService })
+    const selected = catalog?.services.find((service) => service.id === initialService || service.name === initialService)
+    if (!selected) return
+    setInput((current) => current.service ? current : { ...current, serviceId: selected.id, service: selected.name })
   }, [catalog, initialService])
 
-  const selectedService = catalog?.services.find((service) => service.name === input.service)
+  const selectedService = catalog?.services.find((service) => service.id === input.serviceId || service.name === input.service)
   const sizeUnit = selectedService?.sizeUnit ?? 'rooms, units, or sq ft'
 
   // The server owns pricing, so the live preview is a debounced call rather
@@ -346,9 +429,9 @@ function QuoteRequest({ catalog, onBack, initialService }: { catalog: Catalog | 
           <span className="form-step">01 / 05</span>
           <h2>What needs cleaning?</h2>
           <label>Service
-            <select name="service" required value={input.service} onChange={(event) => update('service', event.target.value)}>
+            <select name="service" required value={input.serviceId} onChange={(event) => { const service = catalog?.services.find((item) => item.id === event.target.value); setInput((current) => ({ ...current, serviceId: event.target.value, service: service?.name || '' })) }}>
               <option value="" disabled>Select a working service</option>
-              {catalog?.services.map((service) => <option key={service.id}>{service.name}</option>)}
+              {catalog?.services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
             </select>
           </label>
           <label>Property type
@@ -446,11 +529,23 @@ function QuoteRequest({ catalog, onBack, initialService }: { catalog: Catalog | 
   </main>
 }
 
+const MVP_STATUSES = new Set<RequestStatus>([
+  'New',
+  'Qualifying',
+  'Waiting for Customer',
+  'Assessment Needed',
+  'Assessment Complete',
+  'Quote Draft',
+  'Quote Sent',
+  'Follow-up Due',
+  'Accepted',
+])
+
 const FILTERS = {
   All: () => true,
   'Needs review': (lead: Lead) => lead.status === 'New',
   'Needs information': (lead: Lead) => ['Qualifying', 'Waiting for Customer'].includes(lead.status),
-  Assessment: (lead: Lead) => ['Assessment Needed', 'Assessment Complete'].includes(lead.status),
+  Assessment: (lead: Lead) => lead.status === 'Assessment Needed',
   'Ready to quote': (lead: Lead) => ['Assessment Complete', 'Quote Draft'].includes(lead.status),
   'Acceptance due': (lead: Lead) => ['Quote Sent', 'Follow-up Due'].includes(lead.status),
   Accepted: (lead: Lead) => lead.status === 'Accepted',
@@ -468,31 +563,47 @@ const NEXT_LABEL: Partial<Record<RequestStatus, string>> = {
   'Quote Sent': 'Follow up with customer',
   'Follow-up Due': 'Record customer decision',
   Accepted: 'Acceptance recorded',
-  Scheduling: 'Confirm schedule',
-  Scheduled: 'Start work',
-  'In Progress': 'Quality check',
-  'Needs Approval': 'Resolve scope change',
-  'Quality Check': 'Complete job',
-  Completed: 'Completed',
 }
 
-function Operations({ onNotice }: { onNotice: (message: string) => void }) {
-  const [operator, setOperator] = useState<Operator | null>(null)
+function timeGreeting() {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Good morning'
+  if (hour < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function SidebarNavButton({ icon, label, selected, onClick }: { icon: string, label: string, selected: boolean, onClick: () => void }) {
+  return <button className={selected ? 'selected' : ''} aria-current={selected ? 'page' : undefined} aria-label={label} title={label} onClick={onClick}>
+    <span className="sidebar-icon" aria-hidden="true">{icon}</span>
+    <span className="sidebar-label">{label}</span>
+  </button>
+}
+
+function Operations({ operator, setOperator, onNotice }: { operator: Operator | null, setOperator: Dispatch<SetStateAction<Operator | null>>, onNotice: (message: string) => void }) {
   const [checking, setChecking] = useState(true)
   const [leads, setLeads] = useState<Lead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterKey>('All')
+  const [requestQuery, setRequestQuery] = useState('')
+  const [requestSort, setRequestSort] = useState<{ key: 'id' | 'customer' | 'service' | 'condition' | 'status' | 'next', direction: 'asc' | 'desc' }>({ key: 'next', direction: 'asc' })
   const [error, setError] = useState('')
-  const [section, setSection] = useState<'requests' | 'services' | 'rates'>('requests')
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
+  const [section, setSection] = useState<'overview' | 'requests' | 'services' | 'rates'>('overview')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   const load = useCallback(async () => {
+    setRefreshing(true)
     try {
       setLeads(await getRequests())
       setError('')
+      setLastRefreshed(new Date())
     } catch (caught) {
       const apiError = caught as ApiError
       if (apiError.status === 401) setOperator(null)
       else setError(apiError.message)
+    } finally {
+      setRefreshing(false)
     }
   }, [])
 
@@ -503,17 +614,23 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
       .finally(() => setChecking(false))
   }, [load])
 
+  useEffect(() => {
+    if (!operator) return
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    const interval = window.setInterval(refreshWhenVisible, 60_000)
+    window.addEventListener('focus', refreshWhenVisible)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
+  }, [operator, load])
+
   const onSignedIn = async (session: Operator) => {
     setOperator(session)
     await load()
-  }
-
-  const signOut = async () => {
-    await logout().catch(() => undefined)
-    setOperator(null)
-    setLeads([])
-    setSelectedId(null)
-    onNotice('Signed out of the operator workspace.')
   }
 
   const counts = useMemo(() => ({
@@ -523,14 +640,43 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
     acceptance: leads.filter(FILTERS['Acceptance due']).length,
   }), [leads])
 
+  const analytics = useMemo(() => {
+    const now = Date.now()
+    const start = now - 30 * 24 * 60 * 60 * 1000
+    const weekly = Array.from({ length: 5 }, (_, index) => ({ label: index === 4 ? 'Now' : `W${index + 1}`, count: 0 }))
+    let progressed = 0
+    let accepted = 0
+    leads.forEach((lead) => {
+      const created = new Date(lead.created).getTime()
+      if (created >= start) weekly[Math.min(4, Math.floor((created - start) / (7 * 24 * 60 * 60 * 1000)))].count += 1
+      lead.activity.forEach((event) => {
+        const eventTime = new Date(event.created).getTime()
+        if (eventTime >= start && event.type === 'status' && event.fromStatus) progressed += 1
+        if (eventTime >= start && event.type === 'status' && event.toStatus === 'Accepted') accepted += 1
+      })
+    })
+    const pipeline = Object.entries(FILTERS).slice(0, 6).map(([label, matcher]) => ({ label, count: leads.filter(matcher).length }))
+    return { weekly, progressed, accepted, pipeline }
+  }, [leads])
+
   const visible = useMemo(() => [...leads]
+    .filter((lead) => MVP_STATUSES.has(lead.status))
     .filter(FILTERS[filter])
-    .sort((left, right) => dueSortValue(left) - dueSortValue(right) || right.updated.localeCompare(left.updated)), [leads, filter])
-  const selectedLead = leads.find((lead) => lead.id === selectedId) ?? null
+    .filter((lead) => `${lead.id} ${lead.customer} ${lead.organization} ${lead.service} ${lead.property} ${lead.location} ${lead.nextAction} ${lead.nextActionOwner}`.toLowerCase().includes(requestQuery.toLowerCase().trim()))
+    .sort((left, right) => {
+      const direction = requestSort.direction === 'asc' ? 1 : -1
+      if (requestSort.key === 'next') return direction * (dueSortValue(left) - dueSortValue(right) || right.updated.localeCompare(left.updated))
+      const values: Record<'id' | 'customer' | 'service' | 'condition' | 'status' | 'next', [string, string]> = {
+        id: [left.id, right.id], customer: [left.customer, right.customer], service: [left.service, right.service], condition: [left.condition, right.condition], status: [left.status, right.status], next: ['', ''],
+      }
+      return direction * values[requestSort.key][0].localeCompare(values[requestSort.key][1])
+    }), [leads, filter, requestQuery, requestSort])
+  const sortRequests = (key: typeof requestSort.key) => setRequestSort((current) => current.key === key ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: 'asc' })
+  const selectedLead = leads.find((lead) => lead.id === selectedId && MVP_STATUSES.has(lead.status)) ?? null
 
   const onAdvance = async (lead: Lead) => {
     if (lead.status === 'Accepted') {
-      onNotice('Quote accepted. Scheduling is shelved for this MVP.')
+      onNotice('Quote accepted. Scheduling is outside this MVP workspace.')
       return
     }
     try {
@@ -556,67 +702,155 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
   if (!operator) return <OperatorLogin onSignedIn={onSignedIn} />
 
   return <main className="ops-page">
-    <div className="ops-header page-width">
-      <div>
-        <div className="eyebrow">OPERATOR WORKSPACE <span className="live-dot" /> {operator.name.toUpperCase()}</div>
-        <h1>Good morning, operator.</h1>
-        <p>Here is what needs your attention across the pipeline.</p>
-      </div>
-      <div className="hero-actions">
-          <button className={`button button-quiet ${section === 'requests' ? 'selected' : ''}`} onClick={() => setSection('requests')}>Requests</button>
-          <button className={`button button-quiet ${section === 'services' ? 'selected' : ''}`} onClick={() => setSection('services')}>Services</button>
-          <button className={`button button-quiet ${section === 'rates' ? 'selected' : ''}`} onClick={() => setSection('rates')}>Rate Cards</button>
-          <button className="button button-quiet" onClick={load}>Refresh</button>
-          <button className="button button-dark" onClick={signOut}>Sign out</button>
-        </div>
-    </div>
-
-    {error && <div className="page-width form-errors" role="alert"><p>{error}</p></div>}
-    <div className="sr-only" aria-live="polite">{selectedLead ? `${selectedLead.id}, ${selectedLead.customer}, ${selectedLead.status}. ${selectedLead.nextAction}` : 'No request selected.'}</div>
-
-    {section === 'requests' && <div className="page-width metric-grid">
-      <Metric label="Needs review" value={counts.review} detail="Start with the oldest request" tone="clay" />
-      <Metric label="Missing information" value={counts.information} detail="Clarify before pricing" tone="gold" />
-      <Metric label="Assessment work" value={counts.assessment} detail="Evidence before quote" tone="sage" />
-      <Metric label="Acceptance due" value={counts.acceptance} detail="Customer decision needed" tone="ink" />
-    </div>}
-
-    {section === 'services'
-      ? <ServiceManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
-      : section === 'rates'
-        ? <RateCardManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
-      : <div className="ops-content page-width">
-      <section className="request-panel">
-        <div className="panel-heading">
-          <div><div className="eyebrow">INBOUND PIPELINE</div><h2>Requests</h2></div>
-          <div className="filter-pills">
-            {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
-              <button key={key} className={filter === key ? 'selected' : ''} aria-pressed={filter === key} onClick={() => setFilter(key)}>
-                {key} <span>{leads.filter(FILTERS[key]).length}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="request-table">
-          {visible.length === 0 && <p className="loading-note">No requests in this view yet.</p>}
-          {visible.map((lead) => (
-            <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} aria-pressed={selectedId === lead.id} aria-label={`${lead.id}, ${lead.customer}, ${lead.nextAction}${lead.nextActionDue ? ` due ${lead.nextActionDue}` : ''}`} key={lead.id} onClick={() => setSelectedId(lead.id)}>
-              <span className="request-id">{lead.id}<small>{formatTimestamp(lead.created)}</small></span>
-              <span className="request-customer"><strong>{lead.customer}</strong><small>{lead.organization}</small></span>
-              <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small><small className={`request-next-action ${isPastDue(lead.nextActionDue) ? 'past-due' : ''}`}>Next: {lead.nextAction}{lead.nextActionDue ? ` · ${lead.nextActionDue}` : ''}</small><small className="request-owner">Owner: {lead.nextActionOwner || 'Operator'}</small>{missingInformationFor(lead).length > 0 && <small className="request-missing">Missing: {missingInformationFor(lead).join(', ')}</small>}</span>
-              <span className={`priority ${lead.priority.toLowerCase()}`}>{lead.priority}</span>
-              <Status status={lead.status} />
-            </button>
-          ))}
-        </div>
-      </section>
-      <aside className="detail-panel">
-        {selectedLead
-           ? <LeadDetail lead={selectedLead} onAdvance={onAdvance} onUpdate={onUpdate} onNotice={onNotice} />
-          : <div className="empty-detail"><div className="empty-icon">↗</div><h3>Select a request</h3><p>Review scope, prepare a quote, and keep the next action moving.</p></div>}
+    <div className={`ops-layout page-width ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
+      <aside className={`ops-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`} aria-label="Operator workspace navigation">
+        <button className="sidebar-toggle" aria-label={sidebarCollapsed ? 'Expand workspace navigation' : 'Collapse workspace navigation'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}>
+          <span aria-hidden="true">{sidebarCollapsed ? '»' : '«'}</span>
+          {!sidebarCollapsed && <span>Collapse</span>}
+        </button>
+        <nav>
+          <SidebarNavButton icon="◈" label="Overview" selected={section === 'overview'} onClick={() => setSection('overview')} />
+          <SidebarNavButton icon="▤" label="Requests" selected={section === 'requests'} onClick={() => setSection('requests')} />
+          <SidebarNavButton icon="⌂" label="Services" selected={section === 'services'} onClick={() => setSection('services')} />
+          <SidebarNavButton icon="▥" label="Rate Cards" selected={section === 'rates'} onClick={() => setSection('rates')} />
+        </nav>
       </aside>
-      </div>}
+
+      <div className="ops-main">
+        {section === 'overview' && <div className="ops-header">
+          <div>
+            <div className="eyebrow">OPERATOR WORKSPACE <span className="live-dot" /> {operator.name.toUpperCase()}</div>
+            <h1>{timeGreeting()}, {operator.name.split(/\s+/)[0]}.</h1>
+            <p>Here is what needs your attention before a quote is accepted.</p>
+            <div className="overview-refresh">
+              <small className="refresh-status" role="status">{refreshing ? 'Updating requests...' : lastRefreshed ? `Updated ${lastRefreshed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Requests are updating automatically'}</small>
+              <button className="refresh-button" aria-label="Refresh requests" onClick={() => void load()} disabled={refreshing}>↻ <span>Refresh</span></button>
+            </div>
+          </div>
+        </div>}
+
+        {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+        <div className="sr-only" aria-live="polite">{selectedLead ? `${selectedLead.id}, ${selectedLead.customer}, ${selectedLead.status}. ${selectedLead.nextAction}` : 'No request selected.'}</div>
+
+        {section === 'overview' && <>
+           <div className="metric-grid">
+            <Metric label="Needs review" value={counts.review} detail="Start with the oldest request" tone="clay" onClick={() => { setFilter('Needs review'); setSection('requests') }} />
+            <Metric label="Missing information" value={counts.information} detail="Clarify before pricing" tone="gold" onClick={() => { setFilter('Needs information'); setSection('requests') }} />
+            <Metric label="Assessment work" value={counts.assessment} detail="Choose or complete an assessment" tone="sage" onClick={() => { setFilter('Assessment'); setSection('requests') }} />
+             <Metric label="Acceptance due" value={counts.acceptance} detail="Record the customer decision" tone="ink" onClick={() => { setFilter('Acceptance due'); setSection('requests') }} />
+           </div>
+           <RequestAnalytics data={analytics} />
+           <section className="overview-panel">
+            <div><div className="eyebrow">QUICK ACTIONS</div><h2>Keep the pipeline moving.</h2><p>Jump to the work area that needs your attention.</p></div>
+            <div className="overview-actions">
+              <button className="button button-dark" onClick={() => setSection('requests')}>Review requests <span>↗</span></button>
+              <button className="button button-quiet" onClick={() => setSection('services')}>Manage services <span>↗</span></button>
+              <button className="button button-quiet" onClick={() => setSection('rates')}>Manage rate cards <span>↗</span></button>
+            </div>
+          </section>
+        </>}
+
+        {section === 'services'
+          ? <ServiceManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
+          : section === 'rates'
+            ? <RateCardManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
+            : section === 'requests' ? <div className="ops-content request-content">
+      {selectedLead ? <div className="detail-panel request-detail-page">
+        <button className="back-link request-back" onClick={() => setSelectedId(null)}>← Return to requests</button>
+        <LeadDetail lead={selectedLead} onAdvance={onAdvance} onUpdate={onUpdate} onNotice={onNotice} />
+      </div> : <>
+        <div className="ops-header request-page-header">
+          <div><div className="eyebrow">INBOUND PIPELINE</div><h1>Requests</h1><p>Move each request toward a clear customer decision.</p></div>
+        </div>
+        <section className="request-panel">
+        <div className="request-tabs" role="tablist" aria-label="Filter requests">
+          {(Object.keys(FILTERS) as FilterKey[]).map((key) => (
+            <button key={key} className={filter === key ? 'selected' : ''} role="tab" aria-selected={filter === key} onClick={() => setFilter(key)}>
+              {key} <span>{leads.filter(FILTERS[key]).length}</span>
+            </button>
+           ))}
+         </div>
+            <div className="request-table">
+             <div className="request-column-headings" role="row">
+               <span role="columnheader" title="Stable identifier for this request"><SortHeader label="Request ID" column="id" current={requestSort} onSort={(key) => sortRequests(key as typeof requestSort.key)} /></span>
+               <span role="columnheader" title="Customer who submitted the request"><SortHeader label="Customer" column="customer" current={requestSort} onSort={(key) => sortRequests(key as typeof requestSort.key)} /></span>
+               <span role="columnheader" title="Requested cleaning service"><SortHeader label="Service" column="service" current={requestSort} onSort={(key) => sortRequests(key as typeof requestSort.key)} /></span>
+               <span role="columnheader" title="Customer-provided property condition used for scoping"><SortHeader label="Condition" column="condition" current={requestSort} onSort={(key) => sortRequests(key as typeof requestSort.key)} /></span>
+               <span role="columnheader" title="Current workflow status"><SortHeader label="Status" column="status" current={requestSort} onSort={(key) => sortRequests(key as typeof requestSort.key)} /></span>
+               <span role="columnheader" title="Recommended next operator action"><SortHeader label="Next action" column="next" current={requestSort} onSort={(key) => sortRequests(key as typeof requestSort.key)} /></span>
+             </div>
+             <div className="request-tools"><label className="workspace-search">Search requests<input value={requestQuery} onChange={(event) => setRequestQuery(event.target.value)} placeholder="Search ID, customer, service..." /></label></div>
+            {visible.length === 0 && <p className="loading-note">{requestQuery ? 'No requests match this search.' : 'No requests in this view yet.'}</p>}
+            {visible.map((lead) => (
+             <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} aria-pressed={selectedId === lead.id} aria-label={`${lead.id}, ${lead.customer}, ${lead.nextAction}${lead.nextActionDue ? ` due ${lead.nextActionDue}` : ''}`} key={lead.id} onClick={() => setSelectedId(lead.id)}>
+                <span className="request-id-cell">{lead.id}</span>
+                <span className="request-customer-cell">{lead.customer}</span>
+                <span className="request-service-cell">{lead.service}</span>
+                <span className="request-condition-cell">{lead.condition}</span>
+                <span className="request-status-cell"><Status status={lead.status} /></span>
+                <span className="request-action"><strong className={isPastDue(lead.nextActionDue) ? 'past-due' : ''}>{lead.nextAction} <span aria-hidden="true">→</span></strong>{lead.nextActionDue && <small>{lead.nextActionDue}</small>}</span>
+             </button>
+            ))}
+         </div>
+       </section>
+      </>}
+            </div> : null}
+      </div>
+    </div>
   </main>
+}
+
+function LinkedRateCards({ service, selectedId, onSelect, onChanged }: { service: ManagedService, selectedId: number | null, onSelect: (id: number | null) => void, onChanged: (card: RateCard) => void }) {
+  const cards = service.rateCards || []
+  const selected = cards.find((card) => card.id === selectedId) || null
+  const [draft, setDraft] = useState<RateCard | null>(selected)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => { setDraft(selected) }, [selectedId, service.rateCards])
+
+  const create = async () => {
+    setBusy(true)
+    try {
+      const card = await createRateCard({ serviceId: service.id, name: `${service.name} default rate` })
+      onChanged(card)
+      onSelect(card.id)
+      setError('')
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const save = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const card = await saveRateCard(draft.id, draft)
+      onChanged(card)
+      setError('')
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const publish = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const card = await publishRateCard(draft.id)
+      onChanged(card)
+      setError('')
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const setField = <K extends keyof RateCard>(key: K, value: RateCard[K]) => setDraft((current) => current ? { ...current, [key]: value } : current)
+  const setNumber = (key: keyof RateCard, value: string) => setField(key, value === '' ? null : Number(value) as never)
+
+  return <div className="editor-section linked-rate-cards">
+    <div className="linked-rate-card-heading"><div><div className="eyebrow">CONNECTED PRICING</div><h3>Rate cards for this service</h3><p className="field-help">Choose the pricing rule that applies to an area. Customer cards use the published rate card selected by location and inputs.</p></div><button className="button button-quiet" type="button" onClick={create} disabled={busy}>Add rate card <span>+</span></button></div>
+    {!cards.length && <p className="loading-note">No rate cards are attached. Add one before publishing this service.</p>}
+    {cards.length > 0 && <label className="rate-card-selector">Rate card<select value={selectedId ?? ''} onChange={(event) => onSelect(Number(event.target.value))}>{cards.map((card) => <option key={card.id} value={card.id}>{card.name} · {card.locationName} · {card.status}</option>)}</select></label>}
+    {draft && <div className="linked-rate-card-editor"><div className="linked-rate-card-status"><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><span>{draft.version}</span>{draft.status === 'Draft' && <button className="button button-dark" type="button" onClick={publish} disabled={busy}>Publish rate card</button>}</div><div className="editor-fields"><label>Rate card name<input value={draft.name} onChange={(event) => setField('name', event.target.value)} disabled={draft.status === 'Published'} /></label><label>Area / scope<input value={draft.locationName} onChange={(event) => setField('locationName', event.target.value)} disabled={draft.status === 'Published'} /></label><label>Postal codes<input value={draft.postalCodes.join(', ')} onChange={(event) => setField('postalCodes', event.target.value.split(',').map((item) => item.trim()).filter(Boolean))} disabled={draft.status === 'Published'} placeholder="Blank = default area" /></label><label>Pricing model<select value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)} disabled={draft.status === 'Published'}><option>Flat range</option><option>Per room</option><option>Per square foot</option><option>Per unit</option><option>Hourly</option><option>Custom quote</option></select></label><label>Base price<input type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} disabled={draft.status === 'Published'} /></label><label>Unit rate<input type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} disabled={draft.status === 'Published'} /></label><label>Minimum price<input type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} disabled={draft.status === 'Published'} /></label><label>Estimate spread<input type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} disabled={draft.status === 'Published'} /></label></div>{error && <p className="form-error-text">{error}</p>}{draft.status === 'Draft' && <button className="button button-quiet" type="button" onClick={save} disabled={busy}>Save rate card</button>}</div>}
+  </div>
 }
 
 function ServiceReadiness({ service }: { service: ManagedService }) {
@@ -627,18 +861,48 @@ function ServiceReadiness({ service }: { service: ManagedService }) {
     ['Customer preparation', Boolean(service.customerNote.trim())],
     ['Eligible property types', service.propertyTypes.length > 0],
     ['Timing and duration', Boolean(service.timingPattern.trim() && service.estimatedDuration.trim())],
-    ['Pricing ready', service.pricingReadiness.toLowerCase().includes('ready')],
+    ['Pricing ready', Boolean(service.rateCards?.some((card) => card.status === 'Published'))],
   ] as const
   const ready = checks.every(([, complete]) => complete)
   return <div className="readiness-card"><div className="workflow-block-heading"><span>SERVICE READINESS</span><small className={ready ? 'ready-label' : 'not-ready-label'}>{ready ? 'Ready to review' : `${checks.filter(([, complete]) => !complete).length} items to complete`}</small></div><div className="readiness-list">{checks.map(([label, complete]) => <span className={complete ? 'ready' : 'not-ready'} key={label}><b>{complete ? '✓' : '!'}</b>{label}</span>)}</div><p className="field-help">Publishing should make the customer-facing scope and pricing understandable without relying on operator memory.</p></div>
 }
 
+function serviceNextAction(service: ManagedService) {
+  if (service.status === 'Paused') return 'Review and republish'
+  if (service.status === 'Published') return 'Review public listing'
+  if (!service.rateCards?.some((card) => card.status === 'Published')) return 'Add a rate card'
+  if (!service.description || !service.includedScope || !service.exclusions) return 'Complete service basics'
+  return 'Review and publish'
+}
+
+function rateCardNextAction(card: RateCard) {
+  if (card.status === 'Archived') return 'Create a new version'
+  if (card.status === 'Published') return 'Review published pricing'
+  if (pricingErrorsFor(card).length > 0) return 'Resolve pricing issues'
+  return 'Test estimate before publishing'
+}
+
+function pricingErrorsFor(card: RateCard) {
+  return [
+    card.basePrice != null && card.basePrice < 0,
+    card.unitRate != null && card.unitRate < 0,
+    card.minimumPrice != null && card.minimumPrice < 0,
+    card.estimateSpread != null && (card.estimateSpread < 0 || card.estimateSpread > 1),
+    [card.standardMultiplier, card.heavyMultiplier, card.extremeMultiplier, card.recurringMultiplier].some((value) => value != null && value <= 0),
+  ].filter(Boolean)
+}
+
 function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: string) => void, onUnauthorized: () => void }) {
   const [services, setServices] = useState<ManagedService[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedRateCardId, setSelectedRateCardId] = useState<number | null>(null)
+  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<ManagedService | null>(null)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | ManagedService['status']>('All')
+  const [categoryFilter, setCategoryFilter] = useState('All')
+  const [readinessFilter, setReadinessFilter] = useState('All')
+  const [serviceSort, setServiceSort] = useState<{ key: 'name' | 'category' | 'status' | 'readiness' | 'next', direction: 'asc' | 'desc' }>({ key: 'name', direction: 'asc' })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<{ low: number, high: number, breakdown: string[] } | null>(null)
@@ -646,7 +910,8 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
   const [sampleCondition, setSampleCondition] = useState('Standard')
   const [sampleFrequency, setSampleFrequency] = useState('One-time')
   const [creating, setCreating] = useState(false)
-  const [newService, setNewService] = useState({ id: '', name: '', description: '' })
+  const [newService, setNewService] = useState({ id: '', name: '', description: '', category: '', buyers: '', includedScope: '', exclusions: '', customerNote: '', timingPattern: '', estimatedDuration: '' })
+  const [newServiceRateCard, setNewServiceRateCard] = useState<RateCardForm>(emptyRateCardForm('Default rate'))
 
   const load = useCallback(async () => {
     try {
@@ -665,13 +930,25 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
   useEffect(() => {
     const next = services.find((service) => service.id === selectedId) ?? null
     setDraft(next ? { ...next, addOnRules: next.addOnRules.map((item) => ({ ...item })) } : null)
+    setSelectedRateCardId(next?.rateCards?.find((card) => card.status === 'Published')?.id ?? next?.rateCards?.[0]?.id ?? null)
     setPreview(null)
   }, [selectedId, services])
 
-  const visible = services.filter((service) => {
-    const matchesStatus = statusFilter === 'All' || service.status === statusFilter
-    return matchesStatus && `${service.name} ${service.category} ${service.status}`.toLowerCase().includes(query.toLowerCase().trim())
+  const serviceCategories = [...new Set(services.map((service) => service.category).filter(Boolean))].sort()
+  const serviceReadiness = [...new Set(services.map((service) => service.pricingReadiness).filter(Boolean))].sort()
+  const matchesServiceSearchAndFilters = (service: ManagedService) => {
+    const matchesSearch = `${service.id} ${service.name} ${service.category} ${service.description} ${service.status}`.toLowerCase().includes(query.toLowerCase().trim())
+    return matchesSearch && (categoryFilter === 'All' || service.category === categoryFilter) && (readinessFilter === 'All' || service.pricingReadiness === readinessFilter)
+  }
+  const visible = [...services.filter((service) => (statusFilter === 'All' || service.status === statusFilter) && matchesServiceSearchAndFilters(service))].sort((left, right) => {
+    const direction = serviceSort.direction === 'asc' ? 1 : -1
+    const values: Record<typeof serviceSort.key, [string, string]> = {
+      name: [left.name, right.name], category: [left.category, right.category], status: [left.status, right.status], readiness: [left.pricingReadiness, right.pricingReadiness], next: [serviceNextAction(left), serviceNextAction(right)],
+    }
+    return direction * values[serviceSort.key][0].localeCompare(values[serviceSort.key][1])
   })
+  const sortServices = (key: typeof serviceSort.key) => setServiceSort((current) => current.key === key ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: 'asc' })
+  const clearServiceFilters = () => { setQuery(''); setStatusFilter('All'); setCategoryFilter('All'); setReadinessFilter('All') }
   const setField = <K extends keyof ManagedService>(key: K, value: ManagedService[K]) => {
     setDraft((current) => current ? { ...current, [key]: value } : current)
   }
@@ -683,7 +960,7 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
     try {
       const saved = await saveOperatorService(draft.id, draft)
       setServices((current) => current.map((service) => service.id === saved.id ? saved : service))
-      onNotice(`${saved.name} saved as a draft.`)
+       onNotice(`${saved.name} saved.`)
     } catch (caught) { setError((caught as ApiError).message) }
     finally { setBusy(false) }
   }
@@ -716,12 +993,13 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
     const id = newService.id.trim()
     if (!name || !id) { setError('Enter a service name and ID before creating the draft.'); return }
     try {
-      const created = await createOperatorService({ ...newService, id, name })
+      const created = await createServiceOffering({ service: { ...newService, id, name, propertyTypes: [], frequencyOptions: ['One-time', 'Recurring'] }, rateCards: [{ ...rateCardFormPayload(newServiceRateCard), name: newServiceRateCard.name.trim() || `${name} default rate` }] })
       setServices((current) => [...current, created])
       setSelectedId(created.id)
       setCreating(false)
-      setNewService({ id: '', name: '', description: '' })
-      onNotice(`${created.name} created as a draft.`)
+      setNewService({ id: '', name: '', description: '', category: '', buyers: '', includedScope: '', exclusions: '', customerNote: '', timingPattern: '', estimatedDuration: '' })
+      setNewServiceRateCard(emptyRateCardForm('Default rate'))
+       onNotice(`${created.name} created with a connected Rate Card.`)
     } catch (caught) { setError((caught as ApiError).message) }
   }
 
@@ -733,25 +1011,38 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
     } catch (caught) { setError((caught as ApiError).message) }
   }
 
-  return <div className="service-management service-catalog-management page-width">
-    <div className="service-management-toolbar">
-      <div><div className="eyebrow">WORKING SERVICE CATALOG</div><h2>Service listings</h2><p>Manage the public identity and scope here. Configure prices separately in Rate Cards.</p></div>
+  return <div className={`service-management service-catalog-management ${editing ? 'editing' : ''}`}>
+    <div className={`service-management-toolbar ${editing ? 'detail-toolbar' : ''}`}>
+      <div><div className="eyebrow">WORKING SERVICE CATALOG</div><h2>Service catalog</h2><p>Maintain the services customers can request.</p></div>
       <div className="hero-actions"><button className="button button-quiet" onClick={load}>Refresh</button><button className="button button-dark" onClick={() => setCreating((current) => !current)}>{creating ? 'Cancel' : 'Add service'} <span>{creating ? '×' : '+'}</span></button></div>
     </div>
-    {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
-    {creating && <form className="new-service-form" onSubmit={(event) => { event.preventDefault(); create() }}><div><div className="eyebrow">NEW DRAFT SERVICE</div><p>Start with the public identity. Complete pricing separately in Rate Cards before publishing.</p></div><label>Service ID<input required pattern="[a-z0-9-]+" value={newService.id} onChange={(event) => setNewService((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. move-in-cleaning" /></label><label>Service name<input required value={newService.name} onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Move-in cleaning" /></label><label className="span-2">Short description<textarea value={newService.description} onChange={(event) => setNewService((current) => ({ ...current, description: event.target.value }))} /></label><button className="button button-dark" type="submit">Create draft <span>+</span></button></form>}
-    <div className="service-management-grid">
-      <aside className="service-index">
-        <label>Find a service<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search services" /></label>
-        <div className="service-filter-pills" aria-label="Filter services">
-          {(['All', 'Published', 'Draft', 'Paused'] as const).map((filter) => <button key={filter} className={statusFilter === filter ? 'selected' : ''} onClick={() => setStatusFilter(filter)}>{filter}<span>{filter === 'All' ? services.length : services.filter((service) => service.status === filter).length}</span></button>)}
-        </div>
-        <label className="mobile-service-select">Choose service<select value={selectedId ?? ''} onChange={(event) => setSelectedId(event.target.value)}>{visible.map((service) => <option key={service.id} value={service.id}>{service.name} · {service.status}</option>)}</select></label>
-        {visible.map((service) => <button className={`service-index-row ${selectedId === service.id ? 'selected' : ''}`} key={service.id} onClick={() => setSelectedId(service.id)}><span><strong>{service.name}</strong><small>{service.category}</small></span><em className={`catalog-status ${service.status.toLowerCase()}`}>{service.status}</em></button>)}
-      </aside>
+     {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+     {editing && <button className="back-link management-back" onClick={() => setEditing(false)}>← Return to services</button>}
+     {creating && <form className="new-service-form" onSubmit={(event) => { event.preventDefault(); create() }}><div><div className="eyebrow">NEW SERVICE OFFERING</div><p>Complete the customer-facing identity and connect its first Rate Card before saving.</p></div><label>Service ID<input required pattern="[a-z0-9-]+" value={newService.id} onChange={(event) => setNewService((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. move-in-cleaning" /></label><label>Service name<input required value={newService.name} onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Move-in cleaning" /></label><label className="span-2">Short description<textarea value={newService.description} onChange={(event) => setNewService((current) => ({ ...current, description: event.target.value }))} /></label><fieldset className="new-service-rate-card span-2"><legend>First Rate Card</legend><div className="editor-fields"><label>Rate card name<input value={newServiceRateCard.name} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, name: event.target.value }))} /></label><label>Pricing method<select value={newServiceRateCard.pricingModel} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, pricingModel: event.target.value }))}><option>Flat range</option><option>Per unit</option><option>Per room</option><option>Per square foot</option><option>Hourly</option><option>Custom quote</option></select></label><label>Service area<input value={newServiceRateCard.locationName} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, locationName: event.target.value }))} /></label><label>Postal codes<input value={newServiceRateCard.postalCodes} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, postalCodes: event.target.value }))} placeholder="55401, 55402" /></label><label>Size input<input value={newServiceRateCard.sizeInputLabel} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, sizeInputLabel: event.target.value }))} /></label><label>Base price<input type="number" min="0" value={newServiceRateCard.basePrice} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, basePrice: event.target.value }))} /></label><label>Unit rate<input type="number" min="0" step="0.01" value={newServiceRateCard.unitRate} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, unitRate: event.target.value }))} /></label><label>Minimum price<input type="number" min="0" value={newServiceRateCard.minimumPrice} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, minimumPrice: event.target.value }))} /></label><label>Estimate spread<input type="number" min="0" max="1" step="0.01" value={newServiceRateCard.estimateSpread} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, estimateSpread: event.target.value }))} /></label><label>Standard multiplier<input type="number" min="0.01" step="0.01" value={newServiceRateCard.standardMultiplier} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, standardMultiplier: event.target.value }))} /></label><label>Heavy multiplier<input type="number" min="0.01" step="0.01" value={newServiceRateCard.heavyMultiplier} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, heavyMultiplier: event.target.value }))} /></label><label>Extreme multiplier<input type="number" min="0.01" step="0.01" value={newServiceRateCard.extremeMultiplier} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, extremeMultiplier: event.target.value }))} /></label><label>Recurring multiplier<input type="number" min="0.01" step="0.01" value={newServiceRateCard.recurringMultiplier} onChange={(event) => setNewServiceRateCard((current) => ({ ...current, recurringMultiplier: event.target.value }))} /></label></div></fieldset><button className="button button-dark" type="submit">Create service with Rate Card <span>+</span></button></form>}
+     {creating && <div className="new-service-metadata"><div className="eyebrow">CUSTOMER CARD DETAILS</div><label>Category<input value={newService.category} onChange={(event) => setNewService((current) => ({ ...current, category: event.target.value }))} placeholder="e.g. Residential / Multifamily" /></label><label>Best for<input value={newService.buyers} onChange={(event) => setNewService((current) => ({ ...current, buyers: event.target.value }))} placeholder="Who this service is for" /></label><label>Included scope<textarea value={newService.includedScope} onChange={(event) => setNewService((current) => ({ ...current, includedScope: event.target.value }))} /></label><label>Exclusions<textarea value={newService.exclusions} onChange={(event) => setNewService((current) => ({ ...current, exclusions: event.target.value }))} /></label><label>Customer preparation<textarea value={newService.customerNote} onChange={(event) => setNewService((current) => ({ ...current, customerNote: event.target.value }))} /></label><label>Timing pattern<input value={newService.timingPattern} onChange={(event) => setNewService((current) => ({ ...current, timingPattern: event.target.value }))} placeholder="e.g. Weekdays, 8am–5pm" /></label><label>Estimated duration<input value={newService.estimatedDuration} onChange={(event) => setNewService((current) => ({ ...current, estimatedDuration: event.target.value }))} placeholder="e.g. 2–4 hours" /></label></div>}
+     <div className="service-management-grid">
+       <aside className="service-index">
+         <div className="workspace-tabs" role="tablist" aria-label="Filter services">
+            {(['All', 'Published', 'Draft', 'Paused'] as const).map((filter) => <button key={filter} className={statusFilter === filter ? 'selected' : ''} role="tab" aria-selected={statusFilter === filter} onClick={() => setStatusFilter(filter)}>{filter}<span>{services.filter((service) => (filter === 'All' || service.status === filter) && matchesServiceSearchAndFilters(service)).length}</span></button>)}
+          </div>
+          <div className="service-table">
+            <div className="service-column-headings" role="row"><span role="columnheader" title="Public service name"><SortHeader label="Service" column="name" current={serviceSort} onSort={(key) => sortServices(key as typeof serviceSort.key)} /></span><span role="columnheader" title="Service grouping used for navigation and pricing"><SortHeader label="Category" column="category" current={serviceSort} onSort={(key) => sortServices(key as typeof serviceSort.key)} /></span><span role="columnheader" title="Whether customers can currently request this service"><SortHeader label="Status" column="status" current={serviceSort} onSort={(key) => sortServices(key as typeof serviceSort.key)} /></span><span role="columnheader" title="Whether pricing is ready for this service"><SortHeader label="Readiness" column="readiness" current={serviceSort} onSort={(key) => sortServices(key as typeof serviceSort.key)} /></span><span role="columnheader" title="Recommended next operator action"><SortHeader label="Next action" column="next" current={serviceSort} onSort={(key) => sortServices(key as typeof serviceSort.key)} /></span></div>
+            <div className="service-list-tools">
+              <div className="workspace-filters" aria-label="Service filters">
+                <label>Category<select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}><option>All</option>{serviceCategories.map((category) => <option key={category}>{category}</option>)}</select></label>
+                <label>Readiness<select value={readinessFilter} onChange={(event) => setReadinessFilter(event.target.value)}><option>All</option>{serviceReadiness.map((readiness) => <option key={readiness}>{readiness}</option>)}</select></label>
+                <button className="clear-filters" type="button" onClick={clearServiceFilters} disabled={!query && statusFilter === 'All' && categoryFilter === 'All' && readinessFilter === 'All'}>Clear filters</button>
+              </div>
+              <label className="workspace-search service-list-search">Search services<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search service name, category..." /></label>
+            </div>
+            {visible.map((service) => <button className={`service-index-row ${selectedId === service.id ? 'selected' : ''}`} key={service.id} aria-label={`${service.name}, ${service.status}, ${serviceNextAction(service)}`} onClick={() => { setSelectedId(service.id); setEditing(true) }}><span className="service-name-cell">{service.name}</span><span className="service-category-cell">{service.category}</span><span className="service-status-cell"><em className={`catalog-status ${service.status.toLowerCase()}`}>{service.status}</em></span><span className="service-readiness-cell">{service.pricingReadiness}</span><span className="service-action-cell">{serviceNextAction(service)} <span aria-hidden="true">→</span></span></button>)}
+            {visible.length === 0 && <p className="loading-note">No services match this search or filter.</p>}
+          </div>
+       </aside>
       {draft && <section className="service-editor">
-        <div className="editor-heading"><div><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><h3>{draft.name}</h3><p>Version {draft.version} · {draft.pricingReadiness}</p></div><div className="editor-actions"><button className="button button-quiet" onClick={save} disabled={busy}>Save draft</button>{draft.status === 'Published' ? <button className="button button-quiet" onClick={pause} disabled={busy}>Pause</button> : <button className="button button-dark" onClick={publish} disabled={busy}>Publish</button>}</div></div>
-         <ServiceReadiness service={draft} />
+         <div className="editor-heading"><div><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><h3>{draft.name}</h3><p>Version {draft.version} · {draft.pricingReadiness}</p></div><div className="editor-actions"><button className="button button-quiet" onClick={save} disabled={busy}>Save service</button>{draft.status === 'Published' ? <button className="button button-quiet" onClick={pause} disabled={busy}>Pause</button> : <button className="button button-dark" onClick={publish} disabled={busy}>Publish</button>}</div></div>
+          <ServiceReadiness service={draft} />
+          <LinkedRateCards service={draft} selectedId={selectedRateCardId} onSelect={setSelectedRateCardId} onChanged={(card) => { setDraft((current) => { if (!current) return current; const rateCards = current.rateCards || []; return { ...current, rateCards: rateCards.some((item) => item.id === card.id) ? rateCards.map((item) => item.id === card.id ? card : item) : [...rateCards, card], pricingReadiness: card.status === 'Published' ? 'Ready' : current.pricingReadiness } }); setServices((current) => current.map((item) => { if (item.id !== draft.id) return item; const rateCards = item.rateCards || []; return { ...item, rateCards: rateCards.some((rateCard) => rateCard.id === card.id) ? rateCards.map((rateCard) => rateCard.id === card.id ? card : rateCard) : [...rateCards, card], pricingReadiness: card.status === 'Published' ? 'Ready' : item.pricingReadiness } })) }} />
          <div className="editor-section"><div className="eyebrow">BASICS</div><div className="editor-fields"><label>Service name<input value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Category<input value={draft.category} onChange={(event) => setField('category', event.target.value)} /></label><label>Card icon<input value={draft.icon} onChange={(event) => setField('icon', event.target.value)} maxLength={2} /></label><label>Featured order<input type="number" min="0" value={draft.featuredOrder} onChange={(event) => setField('featuredOrder', Number(event.target.value))} /></label><label className="toggle-field"><input type="checkbox" checked={draft.featured} onChange={(event) => setField('featured', event.target.checked)} /> Show in featured services</label><label className="span-2">Short description<textarea value={draft.description} onChange={(event) => setField('description', event.target.value)} /></label><label className="span-2">Included scope<textarea value={draft.includedScope} onChange={(event) => setField('includedScope', event.target.value)} /></label><label className="span-2">Exclusions and assumptions<textarea value={draft.exclusions} onChange={(event) => setField('exclusions', event.target.value)} /></label><label className="span-2">Customer preparation guidance<textarea value={draft.customerNote} onChange={(event) => setField('customerNote', event.target.value)} placeholder="What should the customer do before service?" /></label></div></div>
         <div className="editor-section"><div className="eyebrow">PRICING RULE</div><p className="field-help">These fields drive the estimate. Price Low and Price High remain reference ranges; they are not calculation inputs.</p><div className="editor-fields pricing-fields"><label>Pricing model<select value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per room</option><option>Per square foot</option><option>Per unit</option><option>Hourly</option><option>Custom quote</option></select></label><label>Size input<input value={draft.sizeInputLabel} onChange={(event) => setField('sizeInputLabel', event.target.value)} /></label><label>Base price<input type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} /></label><label>Unit rate<input type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} /></label><label>Minimum price<input type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} /></label><label>Estimate spread<input type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} /></label><label>Standard multiplier<input type="number" step="0.01" value={draft.standardMultiplier ?? ''} onChange={(event) => setNumber('standardMultiplier', event.target.value)} /></label><label>Heavy multiplier<input type="number" step="0.01" value={draft.heavyMultiplier ?? ''} onChange={(event) => setNumber('heavyMultiplier', event.target.value)} /></label><label>Extreme multiplier<input type="number" step="0.01" value={draft.extremeMultiplier ?? ''} onChange={(event) => setNumber('extremeMultiplier', event.target.value)} /></label><label>Recurring multiplier<input type="number" step="0.01" value={draft.recurringMultiplier ?? ''} onChange={(event) => setNumber('recurringMultiplier', event.target.value)} /></label><label>Travel fee amount<input type="number" value={draft.travelFeeAmount ?? ''} onChange={(event) => setNumber('travelFeeAmount', event.target.value)} /></label><label>Pricing readiness<select value={draft.pricingReadiness} onChange={(event) => setField('pricingReadiness', event.target.value)}><option>Needs operator pricing review</option><option>Ready</option><option>Blocked</option></select></label><label className="span-2">Pricing basis<textarea value={draft.pricingBasis} onChange={(event) => setField('pricingBasis', event.target.value)} /></label><label className="span-2">Change reason<textarea value={draft.changeReason} onChange={(event) => setField('changeReason', event.target.value)} /></label></div></div>
         <div className="editor-section"><div className="eyebrow">ADD-ONS</div><p className="field-help">One rule per line: name | flat or per unit | amount.</p><textarea className="addon-editor" value={draft.addOnRules.map((item) => `${item.name} | ${item.valueType} | ${item.price}`).join('\n')} onChange={(event) => setField('addOnRules', event.target.value.split('\n').filter(Boolean).map((line) => { const [name, valueType, price] = line.split('|').map((part) => part.trim()); return { name, valueType: valueType || 'flat', price: Number(price) || 0 } }))} /> </div>
@@ -765,11 +1056,17 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
   const [cards, setCards] = useState<RateCard[]>([])
   const [services, setServices] = useState<ManagedService[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<RateCard | null>(null)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All' | RateCard['status']>('All')
+  const [serviceFilter, setServiceFilter] = useState('All')
+  const [pricingModelFilter, setPricingModelFilter] = useState('All')
+  const [areaFilter, setAreaFilter] = useState('All')
+  const [rateCardSort, setRateCardSort] = useState<{ key: 'name' | 'service' | 'area' | 'model' | 'status' | 'next', direction: 'asc' | 'desc' }>({ key: 'name', direction: 'asc' })
   const [creating, setCreating] = useState(false)
   const [newServiceId, setNewServiceId] = useState('')
+  const [newRateCard, setNewRateCard] = useState<RateCardForm>(emptyRateCardForm())
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [preview, setPreview] = useState<Estimate | null>(null)
@@ -801,10 +1098,22 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
     setSampleAddOns([])
   }, [cards, selectedId])
 
-  const visible = cards.filter((card) => {
-    const matchesStatus = statusFilter === 'All' || card.status === statusFilter
-    return matchesStatus && `${card.serviceName} ${card.name} ${card.locationName} ${card.status}`.toLowerCase().includes(query.toLowerCase().trim())
+  const rateCardServices = [...new Set(cards.map((card) => card.serviceName).filter(Boolean))].sort()
+  const pricingModels = [...new Set(cards.map((card) => card.pricingModel).filter(Boolean))].sort()
+  const rateCardAreas = [...new Set(cards.map((card) => card.locationName).filter(Boolean))].sort()
+  const matchesRateCardSearchAndFilters = (card: RateCard) => {
+    const matchesSearch = `${card.serviceName} ${card.name} ${card.locationName} ${card.pricingModel} ${card.status} ${card.postalCodes.join(' ')}`.toLowerCase().includes(query.toLowerCase().trim())
+    return matchesSearch && (serviceFilter === 'All' || card.serviceName === serviceFilter) && (pricingModelFilter === 'All' || card.pricingModel === pricingModelFilter) && (areaFilter === 'All' || card.locationName === areaFilter)
+  }
+  const visible = [...cards.filter((card) => (statusFilter === 'All' || card.status === statusFilter) && matchesRateCardSearchAndFilters(card))].sort((left, right) => {
+    const direction = rateCardSort.direction === 'asc' ? 1 : -1
+    const values: Record<typeof rateCardSort.key, [string, string]> = {
+      name: [left.name, right.name], service: [left.serviceName, right.serviceName], area: [left.locationName, right.locationName], model: [left.pricingModel, right.pricingModel], status: [left.status, right.status], next: [rateCardNextAction(left), rateCardNextAction(right)],
+    }
+    return direction * values[rateCardSort.key][0].localeCompare(values[rateCardSort.key][1])
   })
+  const sortRateCards = (key: typeof rateCardSort.key) => setRateCardSort((current) => current.key === key ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' } : { key, direction: 'asc' })
+  const clearRateCardFilters = () => { setQuery(''); setStatusFilter('All'); setServiceFilter('All'); setPricingModelFilter('All'); setAreaFilter('All') }
   const setField = <K extends keyof RateCard>(key: K, value: RateCard[K]) => setDraft((current) => current ? { ...current, [key]: value } : current)
   const setNumber = (key: keyof RateCard, value: string) => setField(key, value === '' ? null : Number(value) as never)
   const pricingErrors = (card: RateCard) => {
@@ -819,13 +1128,16 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
 
   const create = async () => {
     if (!newServiceId) { setError('Choose a service before creating a rate card.'); return }
+    if (!newRateCard.name.trim()) { setError('Name the rate card before creating it.'); return }
     setBusy(true)
     try {
-      const created = await createRateCard({ serviceId: newServiceId })
+      const created = await createRateCard({ serviceId: newServiceId, ...rateCardFormPayload(newRateCard) })
       setCards((current) => [...current, created])
       setSelectedId(created.id)
+      setEditing(true)
       setCreating(false)
-      onNotice(`${created.name} created as a draft.`)
+      setNewRateCard(emptyRateCardForm())
+      onNotice(`${created.name} created. Complete and publish the rate card when ready.`)
     } catch (caught) { setError((caught as ApiError).message) }
     finally { setBusy(false) }
   }
@@ -848,6 +1160,7 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
       const copy = await duplicateRateCard(draft.id)
       setCards((current) => [...current, copy])
       setSelectedId(copy.id)
+      setEditing(true)
       onNotice(`${copy.name} created as a draft.`)
     } catch (caught) { setError((caught as ApiError).message) }
     finally { setBusy(false) }
@@ -889,20 +1202,32 @@ function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: 
     } catch (caught) { setError((caught as ApiError).message) }
   }
 
-  return <div className="service-management rate-card-management page-width">
-    <div className="service-management-toolbar">
-      <div><div className="eyebrow">RATE CARDS</div><h2>Pricing rules</h2><p>Set a simple base, unit rate, and service area. Draft, test, then publish.</p></div>
+  return <div className={`service-management rate-card-management ${editing ? 'editing' : ''}`}>
+    <div className={`service-management-toolbar ${editing ? 'detail-toolbar' : ''}`}>
+      <div><div className="eyebrow">RATE CARDS</div><h2>Rate cards</h2><p>Test and publish the pricing rules operators use.</p></div>
       <div className="hero-actions"><button className="button button-quiet" onClick={load}>Refresh</button><button className="button button-dark" onClick={() => setCreating((current) => !current)}>{creating ? 'Cancel' : 'Add rate card'} <span>{creating ? '×' : '+'}</span></button></div>
     </div>
-    {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
-    {creating && <div className="new-service-form"><div><div className="eyebrow">NEW RATE CARD</div><p>Choose a service, then configure its default or location-specific rate.</p></div><label>Service<select value={newServiceId} onChange={(event) => setNewServiceId(event.target.value)}><option value="">Choose a service</option>{services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label><button className="button button-dark" onClick={create} disabled={busy}>Create draft <span>+</span></button></div>}
+     {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+     {editing && <button className="back-link management-back" onClick={() => setEditing(false)}>← Return to rate cards</button>}
+     {creating && <div className="new-rate-card-form"><div className="new-rate-card-intro"><div className="eyebrow">NEW RATE CARD</div><p>Choose a service and enter the pricing inputs now. You can save the card as a draft, then publish it after testing.</p></div><div className="new-rate-card-fields"><label>Service<select value={newServiceId} onChange={(event) => setNewServiceId(event.target.value)}><option value="">Choose a service</option>{services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label><label>Rate card name<input value={newRateCard.name} onChange={(event) => setNewRateCard((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Minneapolis default rate" /></label><label>Pricing method<select value={newRateCard.pricingModel} onChange={(event) => setNewRateCard((current) => ({ ...current, pricingModel: event.target.value }))}><option>Flat range</option><option>Per unit</option><option>Per room</option><option>Per square foot</option><option>Hourly</option><option>Custom quote</option></select></label><label>Service area<input value={newRateCard.locationName} onChange={(event) => setNewRateCard((current) => ({ ...current, locationName: event.target.value }))} /></label><label>Postal codes<input value={newRateCard.postalCodes} onChange={(event) => setNewRateCard((current) => ({ ...current, postalCodes: event.target.value }))} placeholder="55401, 55402" /></label><label>Size input<input value={newRateCard.sizeInputLabel} onChange={(event) => setNewRateCard((current) => ({ ...current, sizeInputLabel: event.target.value }))} /></label><label>Base price<input type="number" min="0" value={newRateCard.basePrice} onChange={(event) => setNewRateCard((current) => ({ ...current, basePrice: event.target.value }))} /></label><label>Unit rate<input type="number" min="0" step="0.01" value={newRateCard.unitRate} onChange={(event) => setNewRateCard((current) => ({ ...current, unitRate: event.target.value }))} /></label><label>Minimum price<input type="number" min="0" value={newRateCard.minimumPrice} onChange={(event) => setNewRateCard((current) => ({ ...current, minimumPrice: event.target.value }))} /></label><label>Estimate spread<input type="number" min="0" max="1" step="0.01" value={newRateCard.estimateSpread} onChange={(event) => setNewRateCard((current) => ({ ...current, estimateSpread: event.target.value }))} /></label><label>Standard multiplier<input type="number" min="0.01" step="0.01" value={newRateCard.standardMultiplier} onChange={(event) => setNewRateCard((current) => ({ ...current, standardMultiplier: event.target.value }))} /></label><label>Heavy multiplier<input type="number" min="0.01" step="0.01" value={newRateCard.heavyMultiplier} onChange={(event) => setNewRateCard((current) => ({ ...current, heavyMultiplier: event.target.value }))} /></label><label>Extreme multiplier<input type="number" min="0.01" step="0.01" value={newRateCard.extremeMultiplier} onChange={(event) => setNewRateCard((current) => ({ ...current, extremeMultiplier: event.target.value }))} /></label><label>Recurring multiplier<input type="number" min="0.01" step="0.01" value={newRateCard.recurringMultiplier} onChange={(event) => setNewRateCard((current) => ({ ...current, recurringMultiplier: event.target.value }))} /></label></div><button className="button button-dark" onClick={create} disabled={busy}>Create and configure <span>+</span></button></div>}
     <div className="service-management-grid rate-card-grid">
-      <aside className="service-index">
-        <label>Find a rate<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rates" /></label>
-        <div className="service-filter-pills" aria-label="Filter rate cards">{(['All', 'Published', 'Draft', 'Archived'] as const).map((filter) => <button key={filter} className={statusFilter === filter ? 'selected' : ''} onClick={() => setStatusFilter(filter)}>{filter}<span>{filter === 'All' ? cards.length : cards.filter((card) => card.status === filter).length}</span></button>)}</div>
-        {visible.map((card) => <button className={`service-index-row ${selectedId === card.id ? 'selected' : ''}`} key={card.id} onClick={() => setSelectedId(card.id)}><span><strong>{card.serviceName}</strong><small>{card.locationName} · {card.pricingModel}</small></span><em className={`catalog-status ${card.status.toLowerCase()}`}>{card.status}</em></button>)}
-        {visible.length === 0 && <p className="loading-note">No rate cards match this view.</p>}
-      </aside>
+       <aside className="service-index">
+          <div className="workspace-tabs" role="tablist" aria-label="Filter rate cards">{(['All', 'Published', 'Draft', 'Archived'] as const).map((filter) => <button key={filter} className={statusFilter === filter ? 'selected' : ''} role="tab" aria-selected={statusFilter === filter} onClick={() => setStatusFilter(filter)}>{filter}<span>{cards.filter((card) => (filter === 'All' || card.status === filter) && matchesRateCardSearchAndFilters(card)).length}</span></button>)}</div>
+          <div className="service-table rate-card-table">
+            <div className="service-column-headings" role="row"><span role="columnheader" title="Name of the pricing rule"><SortHeader label="Rate card" column="name" current={rateCardSort} onSort={(key) => sortRateCards(key as typeof rateCardSort.key)} /></span><span role="columnheader" title="Service this pricing rule applies to"><SortHeader label="Service" column="service" current={rateCardSort} onSort={(key) => sortRateCards(key as typeof rateCardSort.key)} /></span><span role="columnheader" title="Area or postal scope for this pricing rule"><SortHeader label="Area / scope" column="area" current={rateCardSort} onSort={(key) => sortRateCards(key as typeof rateCardSort.key)} /></span><span role="columnheader" title="How this rate is calculated"><SortHeader label="Pricing model" column="model" current={rateCardSort} onSort={(key) => sortRateCards(key as typeof rateCardSort.key)} /></span><span role="columnheader" title="Whether this pricing rule is active"><SortHeader label="Status" column="status" current={rateCardSort} onSort={(key) => sortRateCards(key as typeof rateCardSort.key)} /></span><span role="columnheader" title="Recommended next operator action"><SortHeader label="Next action" column="next" current={rateCardSort} onSort={(key) => sortRateCards(key as typeof rateCardSort.key)} /></span></div>
+            <div className="service-list-tools">
+              <div className="workspace-filters" aria-label="Rate card filters">
+                <label>Service<select value={serviceFilter} onChange={(event) => setServiceFilter(event.target.value)}><option>All</option>{rateCardServices.map((service) => <option key={service}>{service}</option>)}</select></label>
+                <label>Pricing model<select value={pricingModelFilter} onChange={(event) => setPricingModelFilter(event.target.value)}><option>All</option>{pricingModels.map((model) => <option key={model}>{model}</option>)}</select></label>
+                <label>Area / scope<select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option>All</option>{rateCardAreas.map((area) => <option key={area}>{area}</option>)}</select></label>
+                <button className="clear-filters" type="button" onClick={clearRateCardFilters} disabled={!query && statusFilter === 'All' && serviceFilter === 'All' && pricingModelFilter === 'All' && areaFilter === 'All'}>Clear filters</button>
+              </div>
+              <label className="workspace-search service-list-search">Search rate cards<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search service, area, pricing..." /></label>
+            </div>
+            {visible.map((card) => <button className={`service-index-row ${selectedId === card.id ? 'selected' : ''}`} key={card.id} aria-label={`${card.name}, ${card.serviceName}, ${card.status}, ${rateCardNextAction(card)}`} onClick={() => { setSelectedId(card.id); setEditing(true) }}><span className="rate-card-name-cell">{card.name}</span><span className="rate-card-service-cell">{card.serviceName}</span><span className="rate-card-area-cell">{card.locationName || 'Default area'}</span><span className="rate-card-model-cell">{card.pricingModel}</span><span className="rate-card-status-cell"><em className={`catalog-status ${card.status.toLowerCase()}`}>{card.status}</em></span><span className="rate-card-action-cell">{rateCardNextAction(card)} <span aria-hidden="true">→</span></span></button>)}
+            {visible.length === 0 && <p className="loading-note">No rate cards match this view.</p>}
+          </div>
+       </aside>
       {draft && <section className="service-editor">
         <div className="editor-heading"><div><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><h3>{draft.serviceName}</h3><p>{draft.name} · {draft.version}</p></div><div className="editor-actions">{draft.status === 'Published' ? <><button className="button button-quiet" onClick={duplicate} disabled={busy}>New version</button><button className="button button-quiet" onClick={archive} disabled={busy}>Archive</button></> : <><button className="button button-quiet" onClick={save} disabled={busy}>Save draft</button><button className="button button-dark" onClick={publish} disabled={busy}>Publish</button></>}</div></div>
         <div className="editor-section"><div className="eyebrow">RATE SCOPE</div><div className="editor-fields"><label>Rate card name<input disabled={draft.status === 'Published'} value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Pricing method<select disabled={draft.status === 'Published'} value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per unit</option><option>Per room</option><option>Per square foot</option><option>Hourly</option><option>Custom quote</option></select></label><label>Service area<input disabled={draft.status === 'Published'} value={draft.locationName} onChange={(event) => setField('locationName', event.target.value)} /></label><label>Postal codes<input disabled={draft.status === 'Published'} value={draft.postalCodes.join(', ')} onChange={(event) => setField('postalCodes', event.target.value.split(',').map((item) => item.trim()).filter(Boolean))} placeholder="Blank = default rate" /></label></div><p className="field-help">Leave postal codes blank for the default service-area rate. A matching postal-code rate takes priority.</p></div>
@@ -944,8 +1269,25 @@ function OperatorLogin({ onSignedIn }: { onSignedIn: (operator: Operator) => voi
   </main>
 }
 
-function Metric({ label, value, detail, tone }: { label: string, value: number, detail: string, tone: string }) {
-  return <div className={`metric ${tone}`}><span>{label}</span><strong>{String(value).padStart(2, '0')}</strong><small>{detail}</small></div>
+function Metric({ label, value, detail, tone, onClick }: { label: string, value: number, detail: string, tone: string, onClick: () => void }) {
+  return <button className={`metric metric-button ${tone}`} onClick={onClick} aria-label={`${label}: ${value}. ${detail}`}><span>{label}</span><strong>{String(value).padStart(2, '0')}</strong><small>{detail}</small></button>
+}
+
+function RequestAnalytics({ data }: { data: { weekly: { label: string, count: number }[], progressed: number, accepted: number, pipeline: { label: string, count: number }[] } }) {
+  const maxWeekly = Math.max(1, ...data.weekly.map((item) => item.count))
+  const maxPipeline = Math.max(1, ...data.pipeline.map((item) => item.count))
+  return <section className="analytics-panel" aria-labelledby="analytics-title">
+    <div className="analytics-heading"><div><div className="eyebrow">RECENT OPERATING SIGNALS</div><h2 id="analytics-title">What is moving.</h2><p>Requests received and progressed over the last 30 days.</p></div><div className="analytics-totals"><span><strong>{data.progressed}</strong> progressed</span><span><strong>{data.accepted}</strong> accepted</span></div></div>
+    <div className="analytics-charts">
+      <div className="analytics-chart"><div className="chart-label">Requests received <span>30 days</span></div><div className="request-bars">{data.weekly.map((item) => <div className="request-bar-column" key={item.label}><div className="request-bar-track"><span style={{ height: `${Math.max(4, (item.count / maxWeekly) * 100)}%` }} title={`${item.count} requests received`} /></div><small>{item.label}</small><em>{item.count}</em></div>)}</div></div>
+      <div className="analytics-chart"><div className="chart-label">Pipeline at a glance <span>current</span></div><div className="pipeline-bars">{data.pipeline.map((item) => <div className="pipeline-bar" key={item.label}><span>{item.label}</span><div><i style={{ width: `${(item.count / maxPipeline) * 100}%` }} /><em>{item.count}</em></div></div>)}</div></div>
+    </div>
+  </section>
+}
+
+function SortHeader({ label, column, current, onSort }: { label: string, column: string, current: { key: string, direction: 'asc' | 'desc' }, onSort: (column: string) => void }) {
+  const active = current.key === column
+  return <button className={`sort-header ${active ? 'active' : ''}`} type="button" onClick={() => onSort(column)} aria-label={`Sort by ${label}`} aria-pressed={active}>{label}<span aria-hidden="true">{active ? (current.direction === 'asc' ? ' ↑' : ' ↓') : ' ↕'}</span></button>
 }
 
 function Status({ status }: { status: RequestStatus }) {
@@ -1161,6 +1503,7 @@ function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdv
   const missing = missingInformationFor(lead).map((item) => item === 'location' ? 'service location' : item === 'scope' ? 'customer scope' : item === 'access' ? 'access details' : item)
   const risk = lead.condition === 'Extreme' || /hazard|bio|mold|damage|post-construction|disaster/i.test(`${lead.scope} ${lead.service}`)
   const recommendation = risk ? 'Pause and clarify risk before pricing' : commercialRequest ? 'Complete a commercial assessment' : lead.status === 'New' ? 'Qualify the request' : lead.assessmentType === 'quick' ? 'Confirm quick-estimate evidence' : 'Complete the selected assessment'
+  const mvpTransitions = [lead.status, ...lead.allowedTransitions.filter((status) => status !== lead.status && MVP_STATUSES.has(status))]
 
   return <div className="lead-detail">
     <div className="detail-top">
@@ -1195,7 +1538,7 @@ function LeadDetail({ lead, onAdvance, onUpdate, onNotice }: { lead: Lead, onAdv
 
     <div className="workflow-block next-action-card">
       <div className="workflow-block-heading"><span>NEXT ACTION</span><small>{draft.nextActionDue ? `Due ${draft.nextActionDue}` : 'No due date'}</small></div>
-      <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}>{[lead.status, ...lead.allowedTransitions.filter((status) => status !== lead.status)].map((status) => <option key={status}>{status}</option>)}</select></label>
+      <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}>{mvpTransitions.map((status) => <option key={status}>{status}</option>)}</select></label>
       <label>Action<input value={draft.nextAction} onChange={(event) => setField('nextAction', event.target.value)} placeholder="Request photos, schedule walkthrough..." /></label>
       <div className="two-col compact-fields"><label>Due date<input type="date" value={draft.nextActionDue} onChange={(event) => setField('nextActionDue', event.target.value)} /></label><label>Owner<input value={draft.nextActionOwner} onChange={(event) => setField('nextActionOwner', event.target.value)} placeholder="Operator or teammate" /></label></div>
       <button className="button button-quiet workflow-save" onClick={saveWorkflow}>Save next action</button>

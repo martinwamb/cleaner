@@ -123,9 +123,9 @@ router.post('/ops/rate-cards', (req, res) => {
   if (!service) return res.status(404).json({ error: 'Service not found.' });
   const name = String(input.name || `${service.name} rate`).trim();
   db.prepare(`
-    INSERT INTO rate_cards (service_id, name, location_name, postal_codes, pricing_model, size_input_label, change_reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(serviceId, name, String(input.locationName || 'Default service area'), JSON.stringify(input.postalCodes || []), input.pricingModel || 'Custom quote', input.sizeInputLabel || service.sizeUnit, 'Created as a draft rate card.');
+    INSERT INTO rate_cards (service_id, name, location_name, postal_codes, pricing_model, size_input_label, base_price, unit_rate, minimum_price, estimate_spread, standard_multiplier, heavy_multiplier, extreme_multiplier, recurring_multiplier, add_on_rules, change_reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(serviceId, name, String(input.locationName || 'Default service area'), JSON.stringify(input.postalCodes || []), input.pricingModel || 'Custom quote', input.sizeInputLabel || service.sizeUnit, input.basePrice == null ? null : Number(input.basePrice), input.unitRate == null ? null : Number(input.unitRate), input.minimumPrice == null ? null : Number(input.minimumPrice), input.estimateSpread == null ? 0 : Number(input.estimateSpread), input.standardMultiplier == null ? 1 : Number(input.standardMultiplier), input.heavyMultiplier == null ? 1 : Number(input.heavyMultiplier), input.extremeMultiplier == null ? 1 : Number(input.extremeMultiplier), input.recurringMultiplier == null ? 1 : Number(input.recurringMultiplier), JSON.stringify(input.addOnRules || []), 'Created as a draft rate card.');
   const card = getCard(db.prepare('SELECT last_insert_rowid() AS id').get().id);
   recordEvent(card, req.operator.sub, 'created');
   res.status(201).json({ rateCard: card });

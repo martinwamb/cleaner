@@ -67,6 +67,13 @@ const rowToService = (row, includeDraft = false) => {
 const selectAll = db.prepare('SELECT * FROM services ORDER BY name COLLATE NOCASE');
 const selectPublished = db.prepare("SELECT * FROM services WHERE status = 'Published' ORDER BY name COLLATE NOCASE");
 const selectById = db.prepare('SELECT * FROM services WHERE id = ?');
+const selectAllRateCards = db.prepare(`
+  SELECT rate_cards.*, services.name AS service_name, services.category AS service_category
+  FROM rate_cards JOIN services ON services.id = rate_cards.service_id
+  ORDER BY services.name COLLATE NOCASE, rate_cards.location_name COLLATE NOCASE
+`);
+const selectRateCardsByService = db.prepare("SELECT * FROM rate_cards WHERE service_id = ? AND status = 'Published' ORDER BY location_name COLLATE NOCASE");
+const selectAllRateCardsByService = db.prepare("SELECT * FROM rate_cards WHERE service_id = ? ORDER BY status = 'Published' DESC, location_name COLLATE NOCASE");
 
 function getService(id) {
   const row = selectById.get(id);
@@ -74,18 +81,43 @@ function getService(id) {
 }
 
 function getOperatorServices() {
-  return selectAll.all().map((row) => rowToService(row, true));
+  return selectAll.all().map((row) => ({ ...rowToService(row, true), rateCards: selectAllRateCardsByService.all(row.id).map((card) => rowToRateCard({ ...card, service_name: row.name, service_category: row.category })) }));
 }
 
 function getPublishedServices() {
-  return selectPublished.all().map((row) => rowToService(row));
+  return selectPublished.all().map((row) => ({
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    status: row.status,
+    description: row.description,
+    buyers: row.buyers,
+    color: row.color,
+    icon: row.card_icon,
+    featuredOrder: row.featured_order,
+    propertyTypes: parseJson(row.property_types, []),
+    customerTypes: parseJson(row.customer_types, []),
+    frequencyOptions: parseJson(row.frequency_options, []),
+    useCases: row.use_cases,
+    includedScope: row.included_scope,
+    exclusions: row.exclusions,
+    tags: row.tags,
+    timingPattern: row.timing_pattern,
+    preferredLeadTime: row.preferred_lead_time,
+    estimatedDuration: row.estimated_duration,
+    repeatPotential: row.repeat_potential,
+    customerNote: row.customer_note,
+    featured: Boolean(row.featured),
+    addOnRules: parseJson(row.add_on_rules, []).map((addOn) => ({ name: addOn.name })),
+    quoteEnabled: Boolean(selectRateCardsByService.all(row.id).length),
+  }));
 }
 
 function getPublicCatalog() {
   const services = getPublishedServices();
   const addOns = new Map();
   for (const service of services) {
-    for (const addOn of service.addOnRules) addOns.set(addOn.name, addOn);
+    for (const addOn of service.addOnRules || []) addOns.set(addOn.name, addOn);
   }
   return {
     services,
@@ -96,24 +128,71 @@ function getPublicCatalog() {
   };
 }
 
-function getPricing(serviceName) {
+function getPricing(serviceName, location) {
+  return getPricingForLocation(serviceName, location);
+}
+
+function rowToRateCard(row) {
+  return {
+    id: row.id,
+    serviceId: row.service_id,
+    serviceName: row.service_name,
+    serviceCategory: row.service_category,
+    name: row.name,
+    status: row.status,
+    locationName: row.location_name,
+    postalCodes: parseJson(row.postal_codes, []),
+    pricingModel: row.pricing_model,
+    sizeInputLabel: row.size_input_label,
+    basePrice: row.base_price,
+    unitRate: row.unit_rate,
+    minimumPrice: row.minimum_price,
+    estimateSpread: row.estimate_spread,
+    standardMultiplier: row.standard_multiplier,
+    heavyMultiplier: row.heavy_multiplier,
+    extremeMultiplier: row.extreme_multiplier,
+    oneTimeMultiplier: row.one_time_multiplier,
+    recurringMultiplier: row.recurring_multiplier,
+    travelFeeAmount: row.travel_fee_amount,
+    addOnRules: parseJson(row.add_on_rules, []),
+    version: row.version,
+    effectiveDate: row.effective_date,
+    changeReason: row.change_reason,
+    updatedAt: row.updated_at,
+  };
+}
+
+function getOperatorRateCards() {
+  return selectAllRateCards.all().map(rowToRateCard);
+}
+
+function getPricingForLocation(serviceName, location) {
   const row = db.prepare('SELECT * FROM services WHERE status = \'Published\' AND (name = ? OR id = ?)').get(serviceName, serviceName);
   if (!row) return null;
   const service = rowToService(row);
+  const postalCode = String(location || '').match(/\b\d{5}\b/)?.[0] || '';
+  const cards = selectRateCardsByService.all(service.id);
+  const rateCard = cards.find((card) => parseJson(card.postal_codes, []).includes(postalCode))
+    || cards.find((card) => parseJson(card.postal_codes, []).length === 0);
+  if (!rateCard) return null;
+  const source = rowToRateCard({ ...rateCard, service_name: service.name, service_category: service.category });
   return {
     service,
-    base: service.basePrice,
-    sizeRate: service.unitRate,
-    minimum: service.minimumPrice,
-    spread: service.estimateSpread,
+    rateCard: rateCard || null,
+    rateCardId: source.id,
+    rateCardVersion: source.version,
+    base: source.basePrice,
+    sizeRate: source.unitRate,
+    minimum: source.minimumPrice,
+    spread: source.estimateSpread,
     condition: {
-      Standard: service.standardMultiplier,
-      Heavy: service.heavyMultiplier,
-      Extreme: service.extremeMultiplier,
+      Standard: source.standardMultiplier,
+      Heavy: source.heavyMultiplier,
+      Extreme: source.extremeMultiplier,
     },
-    recurring: service.recurringMultiplier,
-    travelFee: service.travelFeeAmount || 0,
-    addOns: service.addOnRules,
+    recurring: source.recurringMultiplier,
+    travelFee: source.travelFeeAmount || 0,
+    addOns: source.addOnRules,
   };
 }
 
@@ -122,7 +201,9 @@ module.exports = {
   getService,
   getOperatorServices,
   getPublishedServices,
+  getOperatorRateCards,
   getPublicCatalog,
   getPricing,
+  getPricingForLocation,
   rowToService,
 };

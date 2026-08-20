@@ -32,8 +32,8 @@ function serviceNames() {
   return [...getPublicCatalog().services.map((service) => service.name), ...SERVICE_ALIASES.keys()];
 }
 
-function calculateEstimate({ service, property, size, condition, frequency, addOns, location }) {
-  const pricing = getPricing(resolveServiceName(service));
+function calculateEstimate({ service, serviceId, property, size, condition, frequency, addOns, location }) {
+  const pricing = getPricing(serviceId || resolveServiceName(service), location);
   if (!pricing || !Number.isFinite(Number(pricing.base))) return null;
 
   const sizeNumber = Number(size);
@@ -55,6 +55,10 @@ function calculateEstimate({ service, property, size, condition, frequency, addO
   const serviceName = resolveServiceName(service);
 
   return {
+    serviceId: pricing.service.id,
+    rateCardId: pricing.rateCardId,
+    rateCardVersion: pricing.rateCardVersion,
+    rateCardScope: pricing.rateCard.location_name || pricing.rateCard.locationName,
     low: Math.round(total * (1 - (Number(pricing.spread) || 0))),
     high: Math.round(total * (1 + (Number(pricing.spread) || 0))),
     breakdown: [

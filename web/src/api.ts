@@ -1,4 +1,4 @@
-export type RequestStatus = 'New' | 'Under Review' | 'Quote Sent' | 'Confirmed' | 'Completed'
+export type RequestStatus = 'New' | 'Qualifying' | 'Waiting for Customer' | 'Assessment Needed' | 'Assessment Complete' | 'Quote Draft' | 'Quote Sent' | 'Follow-up Due' | 'Accepted' | 'Scheduling' | 'Scheduled' | 'In Progress' | 'Needs Approval' | 'Quality Check' | 'Completed' | 'Unsupported' | 'Declined' | 'Expired' | 'Cancelled'
 
 export type Service = {
   id: string
@@ -30,6 +30,25 @@ export type Estimate = {
   inputs: string[]
 }
 
+export type RequestActivity = {
+  type: string
+  channel: string
+  note: string
+  fromStatus: string | null
+  toStatus: string
+  created: string
+}
+
+export type Workflow = {
+  customer: { id: number, name: string, organization: string, email: string, phone: string, notes: string }
+  property: { id: number, label: string, address: string, property_type: string, access_notes: string }
+  assessments: Array<{ id: number, type: string, status: string, confidence: string, findings: string, measurements: string, evidence: string[] }>
+  quote: { id: number, status: string, current_version: number, versions: Array<{ id: number, version: number, service: string, scope: string, inclusions: string, exclusions: string, assumptions: string, addOns: string[], estimate_low: number | null, estimate_high: number | null, amount: number | null, rate_card_version: string }> }
+  conversations: Array<{ id: number, channel: string, direction: string, subject: string, body: string, created: string }>
+  followUps: Array<{ id: number, action: string, dueAt: string, status: string, note: string }>
+  job: any | null
+}
+
 export type Lead = {
   id: string
   customer: string
@@ -46,9 +65,22 @@ export type Lead = {
   scope: string
   timing: string
   status: RequestStatus
+  allowedTransitions: RequestStatus[]
   priority: 'High' | 'Normal'
   value: string
   estimate: Estimate | null
+  assessmentType: 'quick' | 'photos' | 'video' | 'walkthrough' | 'formal-survey'
+  assessmentStatus: string
+  assessmentConfidence: string
+  accessNotes: string
+  lastCleaned: string
+  customerExpectations: string
+  nextAction: string
+  nextActionDue: string
+  nextActionOwner: string
+  quoteStatus: string
+  quoteNotes: string
+  activity: RequestActivity[]
   created: string
   updated: string
 }
@@ -103,9 +135,40 @@ export type ManagedService = {
   effectiveDate: string | null
   changeReason: string
   updatedAt: string
+  rateCards?: RateCard[]
+  quoteEnabled?: boolean
+}
+
+export type RateCard = {
+  id: number
+  serviceId: string
+  serviceName: string
+  serviceCategory: string
+  name: string
+  status: 'Draft' | 'Published' | 'Archived'
+  locationName: string
+  postalCodes: string[]
+  pricingModel: string
+  sizeInputLabel: string
+  basePrice: number | null
+  unitRate: number | null
+  minimumPrice: number | null
+  estimateSpread: number | null
+  standardMultiplier: number | null
+  heavyMultiplier: number | null
+  extremeMultiplier: number | null
+  oneTimeMultiplier: number | null
+  recurringMultiplier: number | null
+  travelFeeAmount: number | null
+  addOnRules: AddOnRule[]
+  version: string
+  effectiveDate: string | null
+  changeReason: string
+  updatedAt: string
 }
 
 export type QuoteInput = {
+  serviceId: string
   service: string
   property: string
   size: string
@@ -198,11 +261,8 @@ export const getSession = () =>
 export const getOperatorServices = () =>
   request<{ services: ManagedService[] }>('/ops/services').then((result) => result.services)
 
-export const createOperatorService = (input: { id: string; name: string; description?: string }) =>
-  request<{ service: ManagedService }>('/ops/services', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  }).then((result) => result.service)
+export const createServiceOffering = (input: { service: Partial<ManagedService>; rateCards: Partial<RateCard>[] }) =>
+  request<{ service: ManagedService }>('/ops/service-offerings', { method: 'POST', body: JSON.stringify(input) }).then((result) => result.service)
 
 export const saveOperatorService = (id: string, service: Partial<ManagedService>) =>
   request<{ service: ManagedService }>(`/ops/services/${encodeURIComponent(id)}`, {
@@ -228,11 +288,77 @@ export const previewOperatorService = (id: string, service: Partial<ManagedServi
     body: JSON.stringify({ ...input, ...service }),
   }).then((result) => result.estimate)
 
+export const getOperatorRateCards = () =>
+  request<{ rateCards: RateCard[] }>('/ops/rate-cards').then((result) => result.rateCards)
+
+export const createRateCard = (input: { serviceId: string; name?: string; locationName?: string; postalCodes?: string[]; pricingModel?: string; sizeInputLabel?: string; basePrice?: number | null; unitRate?: number | null; minimumPrice?: number | null; estimateSpread?: number; standardMultiplier?: number; heavyMultiplier?: number; extremeMultiplier?: number; recurringMultiplier?: number; addOnRules?: AddOnRule[] }) =>
+  request<{ rateCard: RateCard }>('/ops/rate-cards', { method: 'POST', body: JSON.stringify(input) }).then((result) => result.rateCard)
+
+export const duplicateRateCard = (id: number, name?: string) =>
+  request<{ rateCard: RateCard }>(`/ops/rate-cards/${id}/duplicate`, { method: 'POST', body: JSON.stringify({ name }) }).then((result) => result.rateCard)
+
+export const saveRateCard = (id: number, card: Partial<RateCard>) =>
+  request<{ rateCard: RateCard }>(`/ops/rate-cards/${id}`, { method: 'PATCH', body: JSON.stringify(card) }).then((result) => result.rateCard)
+
+export const previewRateCard = (id: number, input: { size: number; condition: string; frequency: string; addOns: string[]; location: string }) =>
+  request<{ estimate: Estimate | null }>(`/ops/rate-cards/${id}/preview`, { method: 'POST', body: JSON.stringify(input) }).then((result) => result.estimate)
+
+export const publishRateCard = (id: number) =>
+  request<{ rateCard: RateCard }>(`/ops/rate-cards/${id}/publish`, { method: 'POST', body: JSON.stringify({}) }).then((result) => result.rateCard)
+
+export const archiveRateCard = (id: number) =>
+  request<{ rateCard: RateCard }>(`/ops/rate-cards/${id}/archive`, { method: 'POST', body: JSON.stringify({}) }).then((result) => result.rateCard)
+
 export const getRequests = () =>
   request<{ requests: Lead[] }>('/requests').then((result) => result.requests)
+
+export const getWorkflow = (reference: string) =>
+  request<{ workflow: Workflow }>(`/requests/${encodeURIComponent(reference)}/workflow`).then((result) => result.workflow)
+
+export const createAssessment = (reference: string, input: Record<string, unknown>) =>
+  request<{ assessment: unknown }>(`/requests/${encodeURIComponent(reference)}/assessments`, { method: 'POST', body: JSON.stringify(input) })
+
+export const createQuoteVersion = (reference: string, input: Record<string, unknown>) =>
+  request<{ quote: unknown }>(`/requests/${encodeURIComponent(reference)}/quotes`, { method: 'POST', body: JSON.stringify(input) })
+
+export const updateQuoteStatus = (quoteId: number, input: { status: string, decisionNote?: string }) =>
+  request<{ quote: unknown }>(`/quotes/${quoteId}`, { method: 'PATCH', body: JSON.stringify(input) })
+
+export const addConversation = (reference: string, input: Record<string, unknown>) =>
+  request<{ conversation: unknown }>(`/requests/${encodeURIComponent(reference)}/conversations`, { method: 'POST', body: JSON.stringify(input) })
+
+export const addFollowUp = (reference: string, input: Record<string, unknown>) =>
+  request<{ followUp: unknown }>(`/requests/${encodeURIComponent(reference)}/follow-ups`, { method: 'POST', body: JSON.stringify(input) })
+
+export const updateFollowUp = (id: number, status: string) =>
+  request<{ followUp: unknown }>(`/follow-ups/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+
+export const saveSchedule = (reference: string, input: Record<string, unknown>) =>
+  request<{ job: unknown }>(`/requests/${encodeURIComponent(reference)}/schedule`, { method: 'POST', body: JSON.stringify(input) })
+
+export const saveHandoff = (reference: string, input: Record<string, unknown>) =>
+  request<{ handoff: unknown }>(`/requests/${encodeURIComponent(reference)}/handoff`, { method: 'POST', body: JSON.stringify(input) })
+
+export const addVariance = (reference: string, input: Record<string, unknown>) =>
+  request<{ variance: unknown }>(`/requests/${encodeURIComponent(reference)}/variances`, { method: 'POST', body: JSON.stringify(input) })
+
+export const decideVariance = (id: number, decision: string) =>
+  request<{ variance: unknown }>(`/variances/${id}`, { method: 'PATCH', body: JSON.stringify({ decision }) })
+
+export const saveQuality = (reference: string, input: Record<string, unknown>) =>
+  request<{ quality: unknown }>(`/requests/${encodeURIComponent(reference)}/quality`, { method: 'POST', body: JSON.stringify(input) })
+
+export const completeJob = (reference: string, input: Record<string, unknown>) =>
+  request<{ completion: unknown }>(`/requests/${encodeURIComponent(reference)}/complete`, { method: 'POST', body: JSON.stringify(input) })
 
 export const advanceRequest = (reference: string, status?: RequestStatus) =>
   request<{ request: Lead }>(`/requests/${encodeURIComponent(reference)}`, {
     method: 'PATCH',
     body: JSON.stringify(status ? { status } : {}),
+  }).then((result) => result.request)
+
+export const updateRequest = (reference: string, input: Partial<Lead> & { status?: RequestStatus; activityNote?: string; activityChannel?: string }) =>
+  request<{ request: Lead }>(`/requests/${encodeURIComponent(reference)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
   }).then((result) => result.request)

@@ -9,6 +9,8 @@ const catalogRoutes = require('./routes/catalog');
 const authRoutes = require('./routes/auth');
 const requestRoutes = require('./routes/requests');
 const serviceRoutes = require('./routes/services');
+const rateCardRoutes = require('./routes/rate-cards');
+const workflowRoutes = require('./routes/workflow');
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET is not set. Copy .env.example to .env and fill it in.');
@@ -32,6 +34,8 @@ app.use('/api', catalogRoutes);
 app.use('/api', authRoutes);
 app.use('/api', requestRoutes);
 app.use('/api', serviceRoutes);
+app.use('/api', rateCardRoutes);
+app.use('/api', workflowRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

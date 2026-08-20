@@ -11,6 +11,9 @@ const LIMITS = {
   location: 200,
   scope: 2000,
   timing: 160,
+  accessNotes: 1000,
+  lastCleaned: 120,
+  customerExpectations: 1000,
 };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -35,8 +38,9 @@ function parseQuoteRequest(body) {
   if (!email) errors.push('Email is required.');
   else if (!EMAIL_PATTERN.test(email)) errors.push('Email is not a valid address.');
 
-  const service = text(input.service, 80);
-  if (!serviceNames().includes(service)) errors.push('Select one of the listed services.');
+  const selectedService = catalog.services.find((item) => item.id === input.serviceId || item.name === input.service);
+  const service = selectedService?.name || text(input.service, 80);
+  if (!selectedService || !serviceNames().includes(service)) errors.push('Select one of the listed services.');
 
   const property = text(input.property, 80);
    if (property && !catalog.propertyTypes.includes(property)) errors.push('Select a listed property type.');
@@ -55,6 +59,10 @@ function parseQuoteRequest(body) {
   const location = text(input.location, LIMITS.location);
   if (!location) errors.push('A neighborhood or address is required.');
 
+  const assessmentType = ['quick', 'photos', 'video', 'walkthrough', 'formal-survey'].includes(input.assessmentType)
+    ? input.assessmentType
+    : 'quick';
+
   if (errors.length) return { errors };
 
   return {
@@ -64,6 +72,7 @@ function parseQuoteRequest(body) {
       email,
       phone: text(input.phone, LIMITS.phone),
       service,
+      serviceId: selectedService?.id || '',
       property,
       size,
       condition,
@@ -72,6 +81,10 @@ function parseQuoteRequest(body) {
       location,
       scope: text(input.scope, LIMITS.scope),
       timing: text(input.timing, LIMITS.timing) || 'Flexible',
+      assessmentType,
+      accessNotes: text(input.accessNotes, LIMITS.accessNotes),
+      lastCleaned: text(input.lastCleaned, LIMITS.lastCleaned),
+      customerExpectations: text(input.customerExpectations, LIMITS.customerExpectations),
     },
   };
 }
@@ -83,6 +96,7 @@ function parseEstimateInput(body) {
   const rawAddOns = Array.isArray(input.addOns) ? input.addOns : input.addOns ? [input.addOns] : [];
   return {
     service: text(input.service, 80),
+    serviceId: text(input.serviceId, 80),
     property: text(input.property, 80),
     size: input.size,
     condition: input.condition,

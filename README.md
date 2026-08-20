@@ -45,11 +45,26 @@ The operator workbook is the pricing editing surface:
 ```
 
 The importer is retained for initial setup and workbook migrations. Day-to-day
-changes happen in the authenticated Operator workspace under Services:
+changes happen in the authenticated Operator workspace under Services and Rate Cards:
 
 ```text
-Operator workspace → Services → edit → Save draft → Preview estimate → Publish
+Operator workspace → Services → edit listing → Save draft
+Operator workspace → Rate Cards → edit rate → Preview estimate → Publish
 ```
+
+The operator request flow is progressive rather than status-only:
+
+```text
+New → Qualifying → Assessment Needed → Assessment Complete → Quote Draft
+→ Quote Sent → Follow-up Due → Accepted → Scheduling → Scheduled
+→ In Progress → Needs Approval → Quality Check → Completed
+```
+
+Each active request carries a next action and optional due date. The operator
+can record whether the request is being priced from the initial information,
+customer photos/video, an on-site walkthrough, or a formal commercial survey.
+Access notes, customer expectations, last-cleaned context, and quote-preparation
+notes stay with the request instead of living in a separate message thread.
 
 For a workbook migration or seed refresh, run the importer from `server/`:
 
@@ -60,7 +75,10 @@ npm run catalog:import
 The importer repairs/enriches the workbook fields, refreshes
 `server/catalog-config.json`, and seeds the SQLite catalog when no services
 exist. SQLite is the runtime source for the operator catalog, public services,
-and estimate calculation.
+rate cards, and estimate calculation. A rate card contains the pricing method,
+base price, unit rate, minimum, service area, modifiers, and version. Leave
+postal codes blank for a default rate; a matching postal-code rate overrides
+the default for that service.
 
 For a service that is already `Ready`, operators should change only the
 explicit pricing inputs in that row: `Base Price`, `Unit Rate`, `Minimum Price`,
@@ -87,13 +105,33 @@ cd server && npm start
 | POST   | `/api/ops/services/:id/preview` | operator | Preview a draft estimate              |
 | POST   | `/api/ops/services/:id/publish` | operator | Publish service and pricing           |
 | POST   | `/api/ops/services/:id/pause` | operator | Hide service from new requests          |
+| GET    | `/api/ops/rate-cards`        | operator | List service pricing rules               |
+| POST   | `/api/ops/rate-cards`        | operator | Create a draft rate card                 |
+| PATCH  | `/api/ops/rate-cards/:id`    | operator | Save a draft rate card                   |
+| POST   | `/api/ops/rate-cards/:id/duplicate` | operator | Create a new rate version          |
+| POST   | `/api/ops/rate-cards/:id/preview` | operator | Test a draft estimate                |
+| POST   | `/api/ops/rate-cards/:id/publish` | operator | Publish a rate and service             |
+| POST   | `/api/ops/rate-cards/:id/archive` | operator | Archive a rate version                 |
 | POST   | `/api/estimate`            | –        | Illustrative estimate for partial input  |
 | POST   | `/api/requests`            | –        | Submit a quote request                   |
 | POST   | `/api/auth/login`          | –        | Operator sign-in (httpOnly cookie)       |
 | POST   | `/api/auth/logout`         | –        | Clear session                            |
 | GET    | `/api/auth/me`             | operator | Current session                          |
 | GET    | `/api/requests`            | operator | Full pipeline, including contact details |
-| PATCH  | `/api/requests/:reference` | operator | Advance status                           |
+| PATCH  | `/api/requests/:reference` | operator | Advance status and save workflow context |
+| GET    | `/api/requests/:reference/workflow` | operator | Customer, property, assessment, quote, job, and activity context |
+| POST   | `/api/requests/:reference/assessments` | operator | Save an assessment record |
+| POST   | `/api/requests/:reference/quotes` | operator | Create an immutable quote version |
+| PATCH  | `/api/quotes/:id` | operator | Send, revise, accept, decline, or expire a quote |
+| POST   | `/api/requests/:reference/conversations` | operator | Record a conversation or internal note |
+| POST   | `/api/requests/:reference/follow-ups` | operator | Create a dated follow-up task |
+| PATCH  | `/api/follow-ups/:id` | operator | Complete or cancel a follow-up task |
+| POST   | `/api/requests/:reference/schedule` | operator | Create or update a schedule and job |
+| POST   | `/api/requests/:reference/handoff` | operator | Freeze the accepted scope for field work |
+| POST   | `/api/requests/:reference/variances` | operator | Record a scope variance for approval |
+| PATCH  | `/api/variances/:id` | operator | Record a variance decision |
+| POST   | `/api/requests/:reference/quality` | operator | Save a quality review |
+| POST   | `/api/requests/:reference/complete` | operator | Complete a job and record repeat-service signals |
 
 Public write endpoints are rate limited (10 submissions/hour/IP, 10 sign-in
 attempts/15 min/IP).

@@ -1,28 +1,51 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import {
   advanceRequest,
+  addConversation,
+  addFollowUp,
+  addVariance,
+  completeJob,
+  createAssessment,
+  createQuoteVersion,
+  decideVariance,
   ApiError,
   createOperatorService,
+  createRateCard,
+  duplicateRateCard,
   getCatalog,
   getEstimate,
   getRequests,
+  getWorkflow,
   getOperatorServices,
+  getOperatorRateCards,
   getSession,
   login,
   logout,
   pauseOperatorService,
+  archiveRateCard,
   publishOperatorService,
   previewOperatorService,
+  previewRateCard,
+  publishRateCard,
   saveOperatorService,
+  saveRateCard,
+  saveHandoff,
+  saveQuality,
+  saveSchedule,
   submitQuote,
+  updateFollowUp,
+  updateQuoteStatus,
+  updateRequest,
   type Catalog,
   type Estimate,
   type Lead,
   type ManagedService,
+  type RateCard,
   type Operator,
   type QuoteInput,
   type QuoteReceipt,
   type RequestStatus,
+  type Workflow,
   type Service,
 } from './api'
 
@@ -405,17 +428,27 @@ function QuoteRequest({ catalog, onBack, initialService }: { catalog: Catalog | 
 const FILTERS = {
   All: () => true,
   New: (lead: Lead) => lead.status === 'New',
-  Upcoming: (lead: Lead) => lead.status === 'Confirmed',
+  Upcoming: (lead: Lead) => ['Accepted', 'Scheduling', 'Scheduled'].includes(lead.status),
   Closed: (lead: Lead) => lead.status === 'Completed',
 } satisfies Record<string, (lead: Lead) => boolean>
 
 type FilterKey = keyof typeof FILTERS
 
-const NEXT_LABEL: Record<RequestStatus, string> = {
+const NEXT_LABEL: Partial<Record<RequestStatus, string>> = {
   New: 'Review request',
-  'Under Review': 'Send quote',
-  'Quote Sent': 'Confirm booking',
-  Confirmed: 'Mark completed',
+  Qualifying: 'Choose assessment path',
+  'Waiting for Customer': 'Review customer response',
+  'Assessment Needed': 'Complete assessment',
+  'Assessment Complete': 'Prepare quote',
+  'Quote Draft': 'Send quote',
+  'Quote Sent': 'Follow up with customer',
+  'Follow-up Due': 'Record customer decision',
+  Accepted: 'Schedule work',
+  Scheduling: 'Confirm schedule',
+  Scheduled: 'Start work',
+  'In Progress': 'Quality check',
+  'Needs Approval': 'Resolve scope change',
+  'Quality Check': 'Complete job',
   Completed: 'Completed',
 }
 
@@ -426,7 +459,7 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterKey>('All')
   const [error, setError] = useState('')
-  const [section, setSection] = useState<'requests' | 'services'>('requests')
+  const [section, setSection] = useState<'requests' | 'services' | 'rates'>('requests')
 
   const load = useCallback(async () => {
     try {
@@ -461,8 +494,8 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
 
   const counts = useMemo(() => ({
     new: leads.filter((lead) => lead.status === 'New').length,
-    quotes: leads.filter((lead) => lead.status === 'Quote Sent').length,
-    confirmed: leads.filter((lead) => lead.status === 'Confirmed').length,
+    quotes: leads.filter((lead) => ['Quote Sent', 'Follow-up Due'].includes(lead.status)).length,
+    confirmed: leads.filter((lead) => ['Accepted', 'Scheduling', 'Scheduled'].includes(lead.status)).length,
     completed: leads.filter((lead) => lead.status === 'Completed').length,
   }), [leads])
 
@@ -474,6 +507,16 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
       const updated = await advanceRequest(lead.id)
       setLeads((current) => current.map((item) => item.id === updated.id ? updated : item))
       onNotice(`Request ${updated.id} moved to ${updated.status}.`)
+    } catch (caught) {
+      setError((caught as ApiError).message)
+    }
+  }
+
+  const onUpdate = async (lead: Lead, input: Partial<Lead>) => {
+    try {
+      const updated = await updateRequest(lead.id, input)
+      setLeads((current) => current.map((item) => item.id === updated.id ? updated : item))
+      onNotice(`${updated.id} updated.`)
     } catch (caught) {
       setError((caught as ApiError).message)
     }
@@ -492,6 +535,7 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
       <div className="hero-actions">
           <button className={`button button-quiet ${section === 'requests' ? 'selected' : ''}`} onClick={() => setSection('requests')}>Requests</button>
           <button className={`button button-quiet ${section === 'services' ? 'selected' : ''}`} onClick={() => setSection('services')}>Services</button>
+          <button className={`button button-quiet ${section === 'rates' ? 'selected' : ''}`} onClick={() => setSection('rates')}>Rate Cards</button>
           <button className="button button-quiet" onClick={load}>Refresh</button>
           <button className="button button-dark" onClick={signOut}>Sign out</button>
         </div>
@@ -508,6 +552,8 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
 
     {section === 'services'
       ? <ServiceManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
+      : section === 'rates'
+        ? <RateCardManagement onNotice={onNotice} onUnauthorized={() => setOperator(null)} />
       : <div className="ops-content page-width">
       <section className="request-panel">
         <div className="panel-heading">
@@ -526,7 +572,7 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
             <button className={`request-row ${selectedId === lead.id ? 'row-selected' : ''}`} key={lead.id} onClick={() => setSelectedId(lead.id)}>
               <span className="request-id">{lead.id}<small>{formatTimestamp(lead.created)}</small></span>
               <span className="request-customer"><strong>{lead.customer}</strong><small>{lead.organization}</small></span>
-              <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small></span>
+               <span className="request-service"><strong>{lead.service}</strong><small>{lead.property} · {lead.location}</small><small className="request-next-action">Next: {lead.nextAction}{lead.nextActionDue ? ` · ${lead.nextActionDue}` : ''}</small></span>
               <span className={`priority ${lead.priority.toLowerCase()}`}>{lead.priority}</span>
               <Status status={lead.status} />
             </button>
@@ -535,7 +581,7 @@ function Operations({ onNotice }: { onNotice: (message: string) => void }) {
       </section>
       <aside className="detail-panel">
         {selectedLead
-          ? <LeadDetail lead={selectedLead} onAdvance={onAdvance} />
+           ? <LeadDetail lead={selectedLead} onAdvance={onAdvance} onUpdate={onUpdate} />
           : <div className="empty-detail"><div className="empty-icon">↗</div><h3>Select a request</h3><p>Review scope, prepare a quote, and keep the next action moving.</p></div>}
       </aside>
       </div>}
@@ -642,13 +688,13 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
     } catch (caught) { setError((caught as ApiError).message) }
   }
 
-  return <div className="service-management page-width">
+  return <div className="service-management service-catalog-management page-width">
     <div className="service-management-toolbar">
-      <div><div className="eyebrow">WORKING SERVICE CATALOG</div><h2>Services and pricing</h2><p>Draft changes privately, preview the estimate, then publish when the rule is ready.</p></div>
+      <div><div className="eyebrow">WORKING SERVICE CATALOG</div><h2>Service listings</h2><p>Manage the public identity and scope here. Configure prices separately in Rate Cards.</p></div>
       <div className="hero-actions"><button className="button button-quiet" onClick={load}>Refresh</button><button className="button button-dark" onClick={() => setCreating((current) => !current)}>{creating ? 'Cancel' : 'Add service'} <span>{creating ? '×' : '+'}</span></button></div>
     </div>
     {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
-    {creating && <form className="new-service-form" onSubmit={(event) => { event.preventDefault(); create() }}><div><div className="eyebrow">NEW DRAFT SERVICE</div><p>Start with the public identity. Scope and pricing can be completed in the editor before publishing.</p></div><label>Service ID<input required pattern="[a-z0-9-]+" value={newService.id} onChange={(event) => setNewService((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. move-in-cleaning" /></label><label>Service name<input required value={newService.name} onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Move-in cleaning" /></label><label className="span-2">Short description<textarea value={newService.description} onChange={(event) => setNewService((current) => ({ ...current, description: event.target.value }))} /></label><button className="button button-dark" type="submit">Create draft <span>+</span></button></form>}
+    {creating && <form className="new-service-form" onSubmit={(event) => { event.preventDefault(); create() }}><div><div className="eyebrow">NEW DRAFT SERVICE</div><p>Start with the public identity. Complete pricing separately in Rate Cards before publishing.</p></div><label>Service ID<input required pattern="[a-z0-9-]+" value={newService.id} onChange={(event) => setNewService((current) => ({ ...current, id: event.target.value }))} placeholder="e.g. move-in-cleaning" /></label><label>Service name<input required value={newService.name} onChange={(event) => setNewService((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Move-in cleaning" /></label><label className="span-2">Short description<textarea value={newService.description} onChange={(event) => setNewService((current) => ({ ...current, description: event.target.value }))} /></label><button className="button button-dark" type="submit">Create draft <span>+</span></button></form>}
     <div className="service-management-grid">
       <aside className="service-index">
         <label>Find a service<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search services" /></label>
@@ -664,6 +710,142 @@ function ServiceManagement({ onNotice, onUnauthorized }: { onNotice: (message: s
         <div className="editor-section"><div className="eyebrow">PRICING RULE</div><p className="field-help">These fields drive the estimate. Price Low and Price High remain reference ranges; they are not calculation inputs.</p><div className="editor-fields pricing-fields"><label>Pricing model<select value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per room</option><option>Per square foot</option><option>Per unit</option><option>Hourly</option><option>Custom quote</option></select></label><label>Size input<input value={draft.sizeInputLabel} onChange={(event) => setField('sizeInputLabel', event.target.value)} /></label><label>Base price<input type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} /></label><label>Unit rate<input type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} /></label><label>Minimum price<input type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} /></label><label>Estimate spread<input type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} /></label><label>Standard multiplier<input type="number" step="0.01" value={draft.standardMultiplier ?? ''} onChange={(event) => setNumber('standardMultiplier', event.target.value)} /></label><label>Heavy multiplier<input type="number" step="0.01" value={draft.heavyMultiplier ?? ''} onChange={(event) => setNumber('heavyMultiplier', event.target.value)} /></label><label>Extreme multiplier<input type="number" step="0.01" value={draft.extremeMultiplier ?? ''} onChange={(event) => setNumber('extremeMultiplier', event.target.value)} /></label><label>Recurring multiplier<input type="number" step="0.01" value={draft.recurringMultiplier ?? ''} onChange={(event) => setNumber('recurringMultiplier', event.target.value)} /></label><label>Travel fee amount<input type="number" value={draft.travelFeeAmount ?? ''} onChange={(event) => setNumber('travelFeeAmount', event.target.value)} /></label><label>Pricing readiness<select value={draft.pricingReadiness} onChange={(event) => setField('pricingReadiness', event.target.value)}><option>Needs operator pricing review</option><option>Ready</option><option>Blocked</option></select></label><label className="span-2">Pricing basis<textarea value={draft.pricingBasis} onChange={(event) => setField('pricingBasis', event.target.value)} /></label><label className="span-2">Change reason<textarea value={draft.changeReason} onChange={(event) => setField('changeReason', event.target.value)} /></label></div></div>
         <div className="editor-section"><div className="eyebrow">ADD-ONS</div><p className="field-help">One rule per line: name | flat or per unit | amount.</p><textarea className="addon-editor" value={draft.addOnRules.map((item) => `${item.name} | ${item.valueType} | ${item.price}`).join('\n')} onChange={(event) => setField('addOnRules', event.target.value.split('\n').filter(Boolean).map((line) => { const [name, valueType, price] = line.split('|').map((part) => part.trim()); return { name, valueType: valueType || 'flat', price: Number(price) || 0 } }))} /> </div>
         <div className="editor-section preview-section"><div><div className="eyebrow">PREVIEW DRAFT</div><p className="field-help">Test the current draft without publishing it.</p></div><div className="preview-controls"><label>Sample size<input type="number" value={sampleSize} onChange={(event) => setSampleSize(event.target.value)} /></label><label>Condition<select value={sampleCondition} onChange={(event) => setSampleCondition(event.target.value)}><option>Standard</option><option>Heavy</option><option>Extreme</option></select></label><label>Frequency<select value={sampleFrequency} onChange={(event) => setSampleFrequency(event.target.value)}><option>One-time</option><option>Recurring</option></select></label><button className="button button-dark" onClick={runPreview}>Preview estimate</button></div>{preview && <div className="preview-result"><strong>${preview.low.toLocaleString()}–${preview.high.toLocaleString()}</strong><span>{preview.breakdown.join(' · ')}</span></div>}</div>
+      </section>}
+    </div>
+  </div>
+}
+
+function RateCardManagement({ onNotice, onUnauthorized }: { onNotice: (message: string) => void, onUnauthorized: () => void }) {
+  const [cards, setCards] = useState<RateCard[]>([])
+  const [services, setServices] = useState<ManagedService[]>([])
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [draft, setDraft] = useState<RateCard | null>(null)
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'All' | RateCard['status']>('All')
+  const [creating, setCreating] = useState(false)
+  const [newServiceId, setNewServiceId] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState<Estimate | null>(null)
+  const [sampleSize, setSampleSize] = useState('4')
+  const [sampleLocation, setSampleLocation] = useState('55401')
+
+  const load = useCallback(async () => {
+    try {
+      const [nextCards, nextServices] = await Promise.all([getOperatorRateCards(), getOperatorServices()])
+      setCards(nextCards)
+      setServices(nextServices)
+      setSelectedId((current) => current && nextCards.some((card) => card.id === current) ? current : nextCards[0]?.id ?? null)
+      setError('')
+    } catch (caught) {
+      const apiError = caught as ApiError
+      if (apiError.status === 401) onUnauthorized()
+      else setError(apiError.message)
+    }
+  }, [onUnauthorized])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const next = cards.find((card) => card.id === selectedId) ?? null
+    setDraft(next ? { ...next, postalCodes: [...next.postalCodes], addOnRules: next.addOnRules.map((item) => ({ ...item })) } : null)
+    setPreview(null)
+  }, [cards, selectedId])
+
+  const visible = cards.filter((card) => {
+    const matchesStatus = statusFilter === 'All' || card.status === statusFilter
+    return matchesStatus && `${card.serviceName} ${card.name} ${card.locationName} ${card.status}`.toLowerCase().includes(query.toLowerCase().trim())
+  })
+  const setField = <K extends keyof RateCard>(key: K, value: RateCard[K]) => setDraft((current) => current ? { ...current, [key]: value } : current)
+  const setNumber = (key: keyof RateCard, value: string) => setField(key, value === '' ? null : Number(value) as never)
+
+  const create = async () => {
+    if (!newServiceId) { setError('Choose a service before creating a rate card.'); return }
+    setBusy(true)
+    try {
+      const created = await createRateCard({ serviceId: newServiceId })
+      setCards((current) => [...current, created])
+      setSelectedId(created.id)
+      setCreating(false)
+      onNotice(`${created.name} created as a draft.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const save = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const saved = await saveRateCard(draft.id, draft)
+      setCards((current) => current.map((card) => card.id === saved.id ? saved : card))
+      onNotice(`${saved.name} saved as a draft.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const duplicate = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const copy = await duplicateRateCard(draft.id)
+      setCards((current) => [...current, copy])
+      setSelectedId(copy.id)
+      onNotice(`${copy.name} created as a draft.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const publish = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const saved = draft.status === 'Draft' ? await saveRateCard(draft.id, draft) : draft
+      const published = await publishRateCard(saved.id)
+      await load()
+      setSelectedId(published.id)
+      onNotice(`${published.serviceName} pricing is now published.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const archive = async () => {
+    if (!draft) return
+    setBusy(true)
+    try {
+      const archived = await archiveRateCard(draft.id)
+      setCards((current) => current.map((card) => card.id === archived.id ? archived : card))
+      onNotice(`${archived.name} archived.`)
+    } catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+
+  const runPreview = async () => {
+    if (!draft) return
+    try {
+      setPreview(await previewRateCard(draft.id, { size: Number(sampleSize), condition: 'Standard', frequency: 'One-time', addOns: draft.addOnRules.map((item) => item.name).slice(0, 1), location: sampleLocation }))
+      setError('')
+    } catch (caught) { setError((caught as ApiError).message) }
+  }
+
+  return <div className="service-management rate-card-management page-width">
+    <div className="service-management-toolbar">
+      <div><div className="eyebrow">RATE CARDS</div><h2>Pricing rules</h2><p>Set a simple base, unit rate, and service area. Draft, test, then publish.</p></div>
+      <div className="hero-actions"><button className="button button-quiet" onClick={load}>Refresh</button><button className="button button-dark" onClick={() => setCreating((current) => !current)}>{creating ? 'Cancel' : 'Add rate card'} <span>{creating ? '×' : '+'}</span></button></div>
+    </div>
+    {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+    {creating && <div className="new-service-form"><div><div className="eyebrow">NEW RATE CARD</div><p>Choose a service, then configure its default or location-specific rate.</p></div><label>Service<select value={newServiceId} onChange={(event) => setNewServiceId(event.target.value)}><option value="">Choose a service</option>{services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label><button className="button button-dark" onClick={create} disabled={busy}>Create draft <span>+</span></button></div>}
+    <div className="service-management-grid rate-card-grid">
+      <aside className="service-index">
+        <label>Find a rate<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search rates" /></label>
+        <div className="service-filter-pills" aria-label="Filter rate cards">{(['All', 'Published', 'Draft', 'Archived'] as const).map((filter) => <button key={filter} className={statusFilter === filter ? 'selected' : ''} onClick={() => setStatusFilter(filter)}>{filter}<span>{filter === 'All' ? cards.length : cards.filter((card) => card.status === filter).length}</span></button>)}</div>
+        {visible.map((card) => <button className={`service-index-row ${selectedId === card.id ? 'selected' : ''}`} key={card.id} onClick={() => setSelectedId(card.id)}><span><strong>{card.serviceName}</strong><small>{card.locationName} · {card.pricingModel}</small></span><em className={`catalog-status ${card.status.toLowerCase()}`}>{card.status}</em></button>)}
+        {visible.length === 0 && <p className="loading-note">No rate cards match this view.</p>}
+      </aside>
+      {draft && <section className="service-editor">
+        <div className="editor-heading"><div><span className={`catalog-status ${draft.status.toLowerCase()}`}>{draft.status}</span><h3>{draft.serviceName}</h3><p>{draft.name} · {draft.version}</p></div><div className="editor-actions">{draft.status === 'Published' ? <><button className="button button-quiet" onClick={duplicate} disabled={busy}>New version</button><button className="button button-quiet" onClick={archive} disabled={busy}>Archive</button></> : <><button className="button button-quiet" onClick={save} disabled={busy}>Save draft</button><button className="button button-dark" onClick={publish} disabled={busy}>Publish</button></>}</div></div>
+        <div className="editor-section"><div className="eyebrow">RATE SCOPE</div><div className="editor-fields"><label>Rate card name<input disabled={draft.status === 'Published'} value={draft.name} onChange={(event) => setField('name', event.target.value)} /></label><label>Pricing method<select disabled={draft.status === 'Published'} value={draft.pricingModel} onChange={(event) => setField('pricingModel', event.target.value)}><option>Flat range</option><option>Per unit</option><option>Per room</option><option>Per square foot</option><option>Hourly</option><option>Custom quote</option></select></label><label>Service area<input disabled={draft.status === 'Published'} value={draft.locationName} onChange={(event) => setField('locationName', event.target.value)} /></label><label>Postal codes<input disabled={draft.status === 'Published'} value={draft.postalCodes.join(', ')} onChange={(event) => setField('postalCodes', event.target.value.split(',').map((item) => item.trim()).filter(Boolean))} placeholder="Blank = default rate" /></label></div><p className="field-help">Leave postal codes blank for the default service-area rate. A matching postal-code rate takes priority.</p></div>
+        <div className="editor-section"><div className="eyebrow">AMOUNTS</div><div className="editor-fields pricing-fields"><label>Base price<input disabled={draft.status === 'Published'} type="number" value={draft.basePrice ?? ''} onChange={(event) => setNumber('basePrice', event.target.value)} /></label><label>Unit rate<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.unitRate ?? ''} onChange={(event) => setNumber('unitRate', event.target.value)} /></label><label>Minimum price<input disabled={draft.status === 'Published'} type="number" value={draft.minimumPrice ?? ''} onChange={(event) => setNumber('minimumPrice', event.target.value)} /></label><label>Estimate spread<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.estimateSpread ?? ''} onChange={(event) => setNumber('estimateSpread', event.target.value)} /></label><label>Travel fee<input disabled={draft.status === 'Published'} type="number" value={draft.travelFeeAmount ?? ''} onChange={(event) => setNumber('travelFeeAmount', event.target.value)} /></label><label>Size label<input disabled={draft.status === 'Published'} value={draft.sizeInputLabel} onChange={(event) => setField('sizeInputLabel', event.target.value)} /></label></div></div>
+        <div className="editor-section"><div className="eyebrow">ADJUSTMENTS</div><div className="editor-fields pricing-fields"><label>Standard multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.standardMultiplier ?? ''} onChange={(event) => setNumber('standardMultiplier', event.target.value)} /></label><label>Heavy multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.heavyMultiplier ?? ''} onChange={(event) => setNumber('heavyMultiplier', event.target.value)} /></label><label>Extreme multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.extremeMultiplier ?? ''} onChange={(event) => setNumber('extremeMultiplier', event.target.value)} /></label><label>Recurring multiplier<input disabled={draft.status === 'Published'} type="number" step="0.01" value={draft.recurringMultiplier ?? ''} onChange={(event) => setNumber('recurringMultiplier', event.target.value)} /></label></div><p className="field-help">Use 1.00 for no adjustment. Add-ons remain attached to the service and are priced in the service editor for now.</p></div>
+        <div className="editor-section preview-section"><div><div className="eyebrow">TEST THE RATE</div><p className="field-help">Run a sample before publishing. Published rates are locked; create a new version to change them.</p></div><div className="preview-controls"><label>Sample {draft.sizeInputLabel}<input type="number" value={sampleSize} onChange={(event) => setSampleSize(event.target.value)} /></label><label>Postal code<input value={sampleLocation} onChange={(event) => setSampleLocation(event.target.value)} /></label><button className="button button-dark" onClick={runPreview}>Preview estimate</button></div>{preview && <div className="preview-result"><strong>${preview.low.toLocaleString()}–${preview.high.toLocaleString()}</strong><span>{preview.breakdown.join(' · ')}</span></div>}</div>
       </section>}
     </div>
   </div>
@@ -707,7 +889,134 @@ function Status({ status }: { status: RequestStatus }) {
   return <span className={`status ${status.toLowerCase().replace(/ /g, '-')}`}><i />{status}</span>
 }
 
-function LeadDetail({ lead, onAdvance }: { lead: Lead, onAdvance: (lead: Lead) => void }) {
+function OperationalWorkflow({ lead, onUpdate }: { lead: Lead, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
+  const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [assessment, setAssessment] = useState({ type: lead.assessmentType, status: lead.assessmentStatus, confidence: lead.assessmentConfidence, findings: '', measurements: '' })
+  const [quote, setQuote] = useState({ scope: lead.scope, inclusions: '', exclusions: '', assumptions: '', amount: '', notes: '' })
+  const [conversation, setConversation] = useState({ channel: 'phone', direction: 'inbound', body: '' })
+  const [followUp, setFollowUp] = useState({ action: '', dueAt: '', note: '' })
+  const [schedule, setSchedule] = useState({ requestedWindow: lead.timing, confirmedWindow: '', status: 'Requested', assignedTo: '', accessConfirmed: false, notes: '' })
+  const [handoff, setHandoff] = useState({ acceptedScope: lead.scope, exclusions: '', assignedTeam: '', checklist: '' })
+  const [variance, setVariance] = useState({ issue: '', evidence: '', priceDelta: '', timeDelta: '' })
+  const [quality, setQuality] = useState({ result: 'Pass', issues: '', checklist: '' })
+  const [completion, setCompletion] = useState({ customerSignoff: 'Recorded', actualNotes: '', repeatRecommended: false, nextRecommendedDate: '', issueFollowup: '' })
+
+  const load = useCallback(async () => {
+    try { setWorkflow(await getWorkflow(lead.id)); setError('') }
+    catch (caught) { setError((caught as ApiError).message) }
+  }, [lead.id])
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    setAssessment({ type: lead.assessmentType, status: lead.assessmentStatus, confidence: lead.assessmentConfidence, findings: '', measurements: '' })
+    setQuote((current) => ({ ...current, scope: lead.scope }))
+    setSchedule((current) => ({ ...current, requestedWindow: lead.timing }))
+    setHandoff((current) => ({ ...current, acceptedScope: lead.scope }))
+  }, [lead.id, lead.updated])
+
+  const run = async (action: () => Promise<unknown>, message: string, leadUpdate?: Partial<Lead>) => {
+    setBusy(true); setError('')
+    try { await action(); await load(); if (leadUpdate) onUpdate(lead, leadUpdate); setError(''); window.dispatchEvent(new CustomEvent('workflow-notice', { detail: message })) }
+    catch (caught) { setError((caught as ApiError).message) }
+    finally { setBusy(false) }
+  }
+  const field = <T extends object>(setter: Dispatch<SetStateAction<T>>, key: keyof T, value: T[keyof T]) => setter((current) => ({ ...current, [key]: value }))
+  if (!workflow) return <div className="workflow-block"><span>Loading structured workflow...</span>{error && <small>{error}</small>}</div>
+
+  return <div className="workflow-suite">
+    {error && <div className="form-errors" role="alert"><p>{error}</p></div>}
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>ASSESSMENT RECORD</span><small>{workflow.assessments.length} saved</small></div>
+      <div className="two-col compact-fields"><label>Path<select value={assessment.type} onChange={(event) => field(setAssessment, 'type', event.target.value)}><option value="quick">Quick estimate</option><option value="photos">Customer photos</option><option value="video">Customer video</option><option value="walkthrough">On-site walkthrough</option><option value="formal-survey">Formal survey</option></select></label><label>Status<select value={assessment.status} onChange={(event) => field(setAssessment, 'status', event.target.value)}><option>Requested</option><option>In progress</option><option>Complete</option></select></label></div>
+      <label>Findings<textarea rows={2} value={assessment.findings} onChange={(event) => field(setAssessment, 'findings', event.target.value)} placeholder="Areas, surfaces, access, hazards, evidence gaps..." /></label>
+      <label>Measurements<textarea rows={2} value={assessment.measurements} onChange={(event) => field(setAssessment, 'measurements', event.target.value)} placeholder="Rooms, square footage, fixtures, duration assumptions..." /></label>
+      <button className="button button-quiet workflow-save" disabled={busy} onClick={() => run(() => createAssessment(lead.id, assessment).then(() => undefined), 'Assessment saved.')}>Save assessment</button>
+    </div>
+
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>QUOTE VERSIONS</span><small>{workflow.quote.status} · v{workflow.quote.current_version}</small></div>
+      <div className="two-col compact-fields"><label>Amount<input type="number" value={quote.amount} onChange={(event) => field(setQuote, 'amount', event.target.value)} placeholder="Optional firm amount" /></label><label>Status<select value={workflow.quote.status} onChange={(event) => run(() => updateQuoteStatus(workflow.quote.id, { status: event.target.value }), 'Quote status updated.', { quoteStatus: event.target.value })}><option>Draft</option><option>Sent</option><option>Follow-up due</option><option>Accepted</option><option>Declined</option><option>Expired</option><option>Revised</option></select></label></div>
+      <label>Accepted scope<textarea rows={2} value={quote.scope} onChange={(event) => field(setQuote, 'scope', event.target.value)} /></label>
+      <div className="two-col compact-fields"><label>Inclusions<textarea rows={2} value={quote.inclusions} onChange={(event) => field(setQuote, 'inclusions', event.target.value)} /></label><label>Exclusions<textarea rows={2} value={quote.exclusions} onChange={(event) => field(setQuote, 'exclusions', event.target.value)} /></label></div>
+      <label>Assumptions<textarea rows={2} value={quote.assumptions} onChange={(event) => field(setQuote, 'assumptions', event.target.value)} /></label>
+      <button className="button button-quiet workflow-save" disabled={busy} onClick={() => run(() => createQuoteVersion(lead.id, { ...quote, amount: quote.amount ? Number(quote.amount) : null, pricingSnapshot: lead.estimate }).then(() => undefined), 'Quote version saved.')}>Save new quote version</button>
+      {workflow.quote.versions.map((item) => <div className="workflow-summary" key={item.id}><strong>Version {item.version}</strong><span>{item.scope || 'No scope recorded'}{item.amount ? ` · $${item.amount}` : ''}</span></div>)}
+    </div>
+
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>CONVERSATION AND FOLLOW-UP</span><small>{workflow.followUps.filter((item) => item.status === 'Open').length} open follow-ups</small></div>
+      <div className="two-col compact-fields"><label>Channel<select value={conversation.channel} onChange={(event) => field(setConversation, 'channel', event.target.value)}><option>phone</option><option>email</option><option>sms</option><option>internal</option></select></label><label>Direction<select value={conversation.direction} onChange={(event) => field(setConversation, 'direction', event.target.value)}><option>inbound</option><option>outbound</option><option>internal</option></select></label></div>
+      <label>Conversation note<textarea rows={2} value={conversation.body} onChange={(event) => field(setConversation, 'body', event.target.value)} placeholder="Record what the customer said or what was sent." /></label>
+      <button className="button button-quiet workflow-save" disabled={busy || !conversation.body.trim()} onClick={() => run(() => addConversation(lead.id, conversation).then(() => undefined), 'Conversation recorded.')}>Record conversation</button>
+      <div className="two-col compact-fields"><label>Next action<input value={followUp.action} onChange={(event) => field(setFollowUp, 'action', event.target.value)} placeholder="Send revised quote" /></label><label>Due date<input type="datetime-local" value={followUp.dueAt} onChange={(event) => field(setFollowUp, 'dueAt', event.target.value)} /></label></div>
+      <button className="button button-quiet workflow-save" disabled={busy || !followUp.action || !followUp.dueAt} onClick={() => run(() => addFollowUp(lead.id, followUp).then(() => undefined), 'Follow-up added.')}>Add follow-up</button>
+      {workflow.followUps.slice(0, 4).map((item) => <div className="workflow-summary" key={item.id}><strong>{item.action}</strong><span>{item.dueAt} · {item.status}{item.status === 'Open' && <button className="text-button" onClick={() => run(() => updateFollowUp(item.id, 'Completed').then(() => undefined), 'Follow-up completed.')}>Complete</button>}</span></div>)}
+    </div>
+
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>SCHEDULE AND FIELD HANDOFF</span><small>{workflow.job ? workflow.job.status : 'No job yet'}</small></div>
+      <div className="two-col compact-fields"><label>Requested window<input value={schedule.requestedWindow} onChange={(event) => field(setSchedule, 'requestedWindow', event.target.value)} /></label><label>Confirmed window<input value={schedule.confirmedWindow} onChange={(event) => field(setSchedule, 'confirmedWindow', event.target.value)} placeholder="Not confirmed" /></label></div>
+      <div className="two-col compact-fields"><label>Assigned team<input value={schedule.assignedTo} onChange={(event) => field(setSchedule, 'assignedTo', event.target.value)} /></label><label>Status<select value={schedule.status} onChange={(event) => field(setSchedule, 'status', event.target.value)}><option>Requested</option><option>Confirmed</option></select></label></div>
+      <label className="checkbox-row"><input type="checkbox" checked={schedule.accessConfirmed} onChange={(event) => field(setSchedule, 'accessConfirmed', event.target.checked)} /> Access confirmed</label>
+      <button className="button button-quiet workflow-save" disabled={busy} onClick={() => run(() => saveSchedule(lead.id, schedule).then(() => undefined), 'Schedule saved.', { status: schedule.status === 'Confirmed' ? 'Scheduled' : 'Scheduling' })}>Save schedule</button>
+      <label>Accepted scope<textarea rows={2} value={handoff.acceptedScope} onChange={(event) => field(setHandoff, 'acceptedScope', event.target.value)} /></label>
+      <div className="two-col compact-fields"><label>Exclusions<textarea rows={2} value={handoff.exclusions} onChange={(event) => field(setHandoff, 'exclusions', event.target.value)} /></label><label>Checklist<textarea rows={2} value={handoff.checklist} onChange={(event) => field(setHandoff, 'checklist', event.target.value)} placeholder="One requirement per line" /></label></div>
+      <button className="button button-quiet workflow-save" disabled={busy || !workflow.job} onClick={() => run(() => saveHandoff(lead.id, { ...handoff, checklist: handoff.checklist.split('\n').filter(Boolean) }).then(() => undefined), 'Field handoff saved.')}>Save field handoff</button>
+    </div>
+
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>VARIANCE, QUALITY, COMPLETION</span><small>{workflow.job ? `${workflow.job.variances?.length || 0} variance records` : 'Schedule first'}</small></div>
+      <label>Scope variance<textarea rows={2} value={variance.issue} onChange={(event) => field(setVariance, 'issue', event.target.value)} placeholder="What differs from the accepted scope?" /></label>
+      <div className="two-col compact-fields"><label>Price delta<input type="number" value={variance.priceDelta} onChange={(event) => field(setVariance, 'priceDelta', event.target.value)} /></label><label>Time delta (minutes)<input type="number" value={variance.timeDelta} onChange={(event) => field(setVariance, 'timeDelta', event.target.value)} /></label></div>
+      <button className="button button-quiet workflow-save" disabled={busy || !workflow.job || !variance.issue.trim()} onClick={() => run(() => addVariance(lead.id, { ...variance, priceDelta: Number(variance.priceDelta) || 0, timeDelta: Number(variance.timeDelta) || 0 }).then(() => undefined), 'Variance sent for approval.', { status: 'Needs Approval' })}>Request customer approval</button>
+      <label>Quality result<select value={quality.result} onChange={(event) => field(setQuality, 'result', event.target.value)}><option>Pass</option><option>Pending</option><option>Fail</option></select></label>
+      <label>Quality notes<textarea rows={2} value={quality.issues} onChange={(event) => field(setQuality, 'issues', event.target.value)} placeholder="Checklist exceptions, rework, evidence..." /></label>
+      <button className="button button-quiet workflow-save" disabled={busy || !workflow.job} onClick={() => run(() => saveQuality(lead.id, { ...quality, checklist: quality.checklist.split('\n').filter(Boolean) }).then(() => undefined), 'Quality review saved.', { status: quality.result === 'Pass' ? 'Quality Check' : 'Needs Approval' })}>Save quality review</button>
+      <div className="two-col compact-fields"><label>Customer sign-off<select value={completion.customerSignoff} onChange={(event) => field(setCompletion, 'customerSignoff', event.target.value)}><option>Recorded</option><option>Pending</option></select></label><label>Next recommended date<input type="date" value={completion.nextRecommendedDate} onChange={(event) => field(setCompletion, 'nextRecommendedDate', event.target.value)} /></label></div>
+      <label className="checkbox-row"><input type="checkbox" checked={completion.repeatRecommended} onChange={(event) => field(setCompletion, 'repeatRecommended', event.target.checked)} /> Recommend repeat service</label>
+      <label>Completion notes<textarea rows={2} value={completion.actualNotes} onChange={(event) => field(setCompletion, 'actualNotes', event.target.value)} /></label>
+      <button className="button button-dark workflow-save" disabled={busy || !workflow.job || completion.customerSignoff === 'Pending'} onClick={() => run(() => completeJob(lead.id, completion).then(() => undefined), 'Job completed and repeat signal recorded.', { status: 'Completed' })}>Complete job</button>
+    </div>
+  </div>
+}
+
+function LeadDetail({ lead, onAdvance, onUpdate }: { lead: Lead, onAdvance: (lead: Lead) => void, onUpdate: (lead: Lead, input: Partial<Lead>) => void }) {
+  const [activityNote, setActivityNote] = useState('')
+  const [draft, setDraft] = useState({
+    assessmentType: lead.assessmentType,
+    assessmentStatus: lead.assessmentStatus,
+    assessmentConfidence: lead.assessmentConfidence,
+    nextAction: lead.nextAction,
+    nextActionDue: lead.nextActionDue,
+    accessNotes: lead.accessNotes,
+    lastCleaned: lead.lastCleaned,
+    customerExpectations: lead.customerExpectations,
+    quoteStatus: lead.quoteStatus,
+    quoteNotes: lead.quoteNotes,
+  })
+
+  useEffect(() => {
+    setDraft({
+      assessmentType: lead.assessmentType,
+      assessmentStatus: lead.assessmentStatus,
+      assessmentConfidence: lead.assessmentConfidence,
+      nextAction: lead.nextAction,
+      nextActionDue: lead.nextActionDue,
+      accessNotes: lead.accessNotes,
+      lastCleaned: lead.lastCleaned,
+      customerExpectations: lead.customerExpectations,
+      quoteStatus: lead.quoteStatus,
+      quoteNotes: lead.quoteNotes,
+    })
+  }, [lead.id, lead.updated])
+
+  const setField = (key: keyof typeof draft, value: string) => setDraft((current) => ({ ...current, [key]: value }))
+  const saveWorkflow = () => {
+    onUpdate(lead, { ...draft, activityNote, activityChannel: 'internal' } as Partial<Lead> & { activityNote: string, activityChannel: string })
+    setActivityNote('')
+  }
+
   return <div className="lead-detail">
     <div className="detail-top">
       <span className="request-id">{lead.id}<small>{formatTimestamp(lead.created)}</small></span>
@@ -734,7 +1043,27 @@ function LeadDetail({ lead, onAdvance }: { lead: Lead, onAdvance: (lead: Lead) =
       <p>Preferred timing: {lead.timing}</p>
     </div>
 
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>NEXT ACTION</span><small>{draft.nextActionDue ? `Due ${draft.nextActionDue}` : 'No due date'}</small></div>
+      <label>Opportunity stage<select value={lead.status} onChange={(event) => onUpdate(lead, { status: event.target.value as RequestStatus })}><option>New</option><option>Qualifying</option><option>Waiting for Customer</option><option>Assessment Needed</option><option>Assessment Complete</option><option>Quote Draft</option><option>Quote Sent</option><option>Follow-up Due</option><option>Accepted</option><option>Scheduling</option><option>Scheduled</option><option>In Progress</option><option>Needs Approval</option><option>Quality Check</option><option>Completed</option><option>Unsupported</option><option>Declined</option><option>Expired</option><option>Cancelled</option></select></label>
+      <label>Action<input value={draft.nextAction} onChange={(event) => setField('nextAction', event.target.value)} placeholder="Request photos, schedule walkthrough..." /></label>
+      <label>Due date<input type="date" value={draft.nextActionDue} onChange={(event) => setField('nextActionDue', event.target.value)} /></label>
+    </div>
+
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>ASSESSMENT</span><small>Choose the evidence path before pricing</small></div>
+      <label>Assessment path<select value={draft.assessmentType} onChange={(event) => setField('assessmentType', event.target.value)}><option value="quick">Quick estimate</option><option value="photos">Customer photos</option><option value="video">Customer video</option><option value="walkthrough">On-site walkthrough</option><option value="formal-survey">Formal commercial survey</option></select></label>
+      <div className="two-col compact-fields"><label>Status<select value={draft.assessmentStatus} onChange={(event) => setField('assessmentStatus', event.target.value)}><option>Not started</option><option>Requested</option><option>In progress</option><option>Complete</option></select></label><label>Confidence<select value={draft.assessmentConfidence} onChange={(event) => setField('assessmentConfidence', event.target.value)}><option>Unassessed</option><option>Low</option><option>Medium</option><option>High</option></select></label></div>
+      <label>Last professional clean<input value={draft.lastCleaned} onChange={(event) => setField('lastCleaned', event.target.value)} placeholder="e.g. 3 months ago" /></label>
+    </div>
+
     {lead.scope && <div className="detail-block"><span>CUSTOMER NOTES</span><p>{lead.scope}</p></div>}
+
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>SCOPE CONTEXT</span><small>What the customer expects and what access requires</small></div>
+      <label>Customer expectation<textarea rows={3} value={draft.customerExpectations} onChange={(event) => setField('customerExpectations', event.target.value)} placeholder="What would a great result look like?" /></label>
+      <label>Access notes<textarea rows={2} value={draft.accessNotes} onChange={(event) => setField('accessNotes', event.target.value)} placeholder="Keys, lockbox, parking, alarm, contact..." /></label>
+    </div>
 
     <div className="operator-estimate">
       <div><span>ILLUSTRATIVE RANGE</span><strong>{lead.value}</strong></div>
@@ -742,10 +1071,22 @@ function LeadDetail({ lead, onAdvance }: { lead: Lead, onAdvance: (lead: Lead) =
       {lead.estimate && <div className="operator-inputs">{lead.estimate.inputs.map((item) => <span key={item}>{item}</span>)}</div>}
     </div>
 
+    <div className="workflow-block">
+      <div className="workflow-block-heading"><span>QUOTE PREPARATION</span><small>Separate estimate from customer decision</small></div>
+      <label>Quote status<select value={draft.quoteStatus} onChange={(event) => setField('quoteStatus', event.target.value)}><option>Not started</option><option>Draft</option><option>Sent</option><option>Follow-up due</option><option>Accepted</option><option>Declined</option><option>Expired</option><option>Revised</option></select></label>
+      <label>Operator quote notes<textarea rows={3} value={draft.quoteNotes} onChange={(event) => setField('quoteNotes', event.target.value)} placeholder="Scope, assumptions, exclusions, or customer objection..." /></label>
+      <label>Conversation or follow-up note<textarea rows={2} value={activityNote} onChange={(event) => setActivityNote(event.target.value)} placeholder="What did the customer say, or what should happen next?" /></label>
+      <button className="button button-quiet workflow-save" onClick={saveWorkflow}>Save workflow context</button>
+    </div>
+
+    <OperationalWorkflow lead={lead} onUpdate={onUpdate} />
+
+    {lead.activity.length > 0 && <div className="activity-list"><div className="eyebrow">RECENT ACTIVITY</div>{lead.activity.slice(0, 5).map((event, index) => <div className="activity-item" key={`${event.created}-${index}`}><strong>{event.type === 'status' ? `${event.fromStatus || 'Created'} → ${event.toStatus}` : event.type}</strong><small>{formatTimestamp(event.created)} · {event.channel}</small>{event.note && <p>{event.note}</p>}</div>)}</div>}
+
     <div className="detail-actions">
       <span>Move request forward</span>
       <button onClick={() => onAdvance(lead)} disabled={lead.status === 'Completed'}>
-        {lead.status === 'Completed' ? 'Completed' : `Next: ${NEXT_LABEL[lead.status]}`} <span>→</span>
+         {lead.status === 'Completed' ? 'Completed' : `Next: ${NEXT_LABEL[lead.status] || 'Update request'}`} <span>→</span>
       </button>
     </div>
   </div>

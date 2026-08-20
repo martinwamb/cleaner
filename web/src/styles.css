@@ -123,6 +123,32 @@ i { font-family: 'Playfair Display', serif; font-weight: 500; }.hero-intro { max
 .preview-result { display: grid; gap: 8px; padding: 18px; background: var(--ink); color: var(--paper); }
 .preview-result strong { font: 26px var(--serif); }
 .preview-result span { color: #d8d5ca; font: 11px var(--mono); line-height: 1.6; }
+.workflow-block { display: grid; gap: 12px; margin: 18px 0; padding: 16px; background: #f7f3e8; border: 1px solid var(--line); }
+.workflow-block-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.workflow-block-heading span { font: 10px var(--mono); letter-spacing: .08em; color: var(--muted); }
+.workflow-block-heading small { color: var(--muted); font-size: 11px; }
+.workflow-block label { display: grid; gap: 7px; color: var(--muted); font: 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.workflow-block input, .workflow-block select, .workflow-block textarea { width: 100%; border: 1px solid var(--line); background: var(--paper); padding: 10px 11px; color: var(--ink); font: 13px var(--sans); text-transform: none; letter-spacing: normal; }
+.workflow-block textarea { resize: vertical; }
+.compact-fields { gap: 12px; }
+.workflow-save { justify-self: start; }
+.request-next-action { color: var(--clay) !important; }
+.activity-list { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+.activity-item { display: grid; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.activity-item strong { font-size: 12px; }
+.activity-item small { color: var(--muted); font: 10px var(--mono); }
+.activity-item p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.workflow-suite { display: grid; gap: 2px; margin-top: 18px; }
+.workflow-suite .workflow-block { margin: 0; background: #fbf9f3; }
+.workflow-summary { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 11px; }
+.workflow-summary span { color: var(--muted); text-align: right; }
+.workflow-summary .text-button { font-size: 10px; margin-left: 8px; border-bottom: 1px solid var(--ink); }
+.service-catalog-management .service-editor > .editor-section:nth-child(3) { display: none; }
+.service-catalog-management .editor-actions .button-dark { display: none; }
+.rate-card-management .service-editor { border-color: #d7c6a0; }
+.rate-card-management .service-index { background: #f7f3e8; }
+.rate-card-management .service-index-row small { line-height: 1.35; }
+.rate-card-management .editor-section { background: transparent; }
 @media (max-width: 800px) {
   .service-management-grid { grid-template-columns: 1fr; }
   .service-management-toolbar, .editor-heading { display: grid; align-items: start; }

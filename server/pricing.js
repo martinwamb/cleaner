@@ -33,7 +33,7 @@ function serviceNames() {
 }
 
 function calculateEstimate({ service, property, size, condition, frequency, addOns, location }) {
-  const pricing = getPricing(resolveServiceName(service));
+  const pricing = getPricing(resolveServiceName(service), location);
   if (!pricing || !Number.isFinite(Number(pricing.base))) return null;
 
   const sizeNumber = Number(size);

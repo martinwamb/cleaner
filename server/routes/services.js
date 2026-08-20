@@ -118,7 +118,8 @@ router.patch('/ops/services/:id', (req, res) => {
 router.post('/ops/services/:id/publish', (req, res) => {
   const service = getService(req.params.id);
   if (!service) return res.status(404).json({ error: 'Service not found.' });
-  if (!hasPricing(service)) return res.status(409).json({ error: 'Complete pricing inputs and mark the service Ready before publishing.' });
+  const publishedRate = db.prepare("SELECT 1 FROM rate_cards WHERE service_id = ? AND status = 'Published' LIMIT 1").get(service.id);
+  if (!publishedRate) return res.status(409).json({ error: 'Publish a Rate Card before publishing this service.' });
   const raw = selectRaw.get(service.id);
   if (raw.status === 'Published' && raw.draft_snapshot) {
     applyServiceFields(service, service.id);
